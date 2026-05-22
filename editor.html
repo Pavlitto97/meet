@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <title>Meet — редактор аватарок</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #202124;
+      color: #e8eaed;
+      padding: 32px;
+    }
+    h1 { font-size: 22px; margin: 0 0 4px; font-weight: 500; }
+    .hint { color: #9aa0a6; font-size: 13px; margin-bottom: 24px; }
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    button, label.file-btn {
+      background: #8ab4f8;
+      color: #202124;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 20px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button:disabled { opacity: .4; cursor: not-allowed; }
+    button.secondary {
+      background: transparent;
+      color: #8ab4f8;
+      border: 1px solid #5f6368;
+    }
+    .status { color: #9aa0a6; font-size: 13px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+      max-width: 1100px;
+    }
+    .slot {
+      background: #2d2e30;
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .slot .name {
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .preview {
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      background: #3c4043 url("assets/img/placeholder.svg") center/40% no-repeat;
+      border-radius: 8px;
+      overflow: hidden;
+      position: relative;
+    }
+    .preview img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .slot input[type=file] { display: none; }
+    .slot .file-btn {
+      background: #3c4043;
+      color: #e8eaed;
+      text-align: center;
+      font-size: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 400;
+    }
+    .slot .clear {
+      background: transparent;
+      color: #9aa0a6;
+      font-size: 12px;
+      padding: 4px;
+      border: none;
+      cursor: pointer;
+      text-align: center;
+    }
+    .skipped {
+      opacity: .5;
+      pointer-events: none;
+    }
+    .skipped .name::after {
+      content: " — пропускаємо";
+      color: #9aa0a6;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Редактор аватарок Meet</h1>
+  <p class="hint">Завантажте Meet HTML, додайте фото для кожного учасника (крім Pavlo Grinevich і «3 others») і збережіть. Готовий файл матиме фото вшитими — жодних ознак редагування.</p>
+
+  <div class="toolbar">
+    <label class="file-btn">
+      Завантажити Meet HTML
+      <input type="file" id="loadHtml" accept=".html,text/html" hidden>
+    </label>
+    <button id="autoLoad" class="secondary">Або взяти з папки (через сервер)</button>
+    <button id="save" disabled>Зберегти Meet HTML</button>
+    <span class="status" id="status">Файл не завантажено</span>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <script>
+    // Учасники у тому порядку, як вони видно у сітці справа.
+    // Pavlo Grinevich (126) і група «3 others» (136/137/138) пропущені.
+    const PARTICIPANTS = [
+      { id: "spaces/mBsECBRYcS4B/devices/127", name: "Sandro Machaidze" },
+      { id: "spaces/mBsECBRYcS4B/devices/129", name: "Саня" },
+      { id: "spaces/mBsECBRYcS4B/devices/131", name: "Ваня" },
+      { id: "spaces/mBsECBRYcS4B/devices/132", name: "Даня" },
+      { id: "spaces/mBsECBRYcS4B/devices/133", name: "Дима" },
+      { id: "spaces/mBsECBRYcS4B/devices/134", name: "Микита" },
+      { id: "spaces/mBsECBRYcS4B/devices/135", name: "Микола" },
+    ];
+
+    let sourceHtml = null;
+    let sourceFilename = "Meet - yrt-kczi-csw.html";
+    const photos = {}; // participantId -> dataURL
+
+    const grid = document.getElementById("grid");
+    const statusEl = document.getElementById("status");
+    const saveBtn = document.getElementById("save");
+    const loadHtmlInput = document.getElementById("loadHtml");
+    const autoLoadBtn = document.getElementById("autoLoad");
+
+    function renderGrid() {
+      grid.innerHTML = "";
+      for (const p of PARTICIPANTS) {
+        const slot = document.createElement("div");
+        slot.className = "slot";
+        slot.innerHTML = `
+          <div class="name">${p.name}</div>
+          <div class="preview" data-id="${p.id}"></div>
+          <label class="file-btn">
+            Вибрати фото
+            <input type="file" accept="image/*" hidden>
+          </label>
+          <button type="button" class="clear" hidden>Прибрати</button>
+        `;
+        const preview = slot.querySelector(".preview");
+        const input = slot.querySelector("input[type=file]");
+        const clearBtn = slot.querySelector(".clear");
+
+        input.addEventListener("change", async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const dataUrl = await fileToDataUrl(file);
+          photos[p.id] = dataUrl;
+          preview.innerHTML = `<img src="${dataUrl}" alt="">`;
+          clearBtn.hidden = false;
+        });
+        clearBtn.addEventListener("click", () => {
+          delete photos[p.id];
+          preview.innerHTML = "";
+          input.value = "";
+          clearBtn.hidden = true;
+        });
+
+        grid.appendChild(slot);
+      }
+    }
+
+    function fileToDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+    }
+
+    function setLoaded(html, filename) {
+      sourceHtml = html;
+      sourceFilename = filename || sourceFilename;
+      statusEl.textContent = `Завантажено: ${sourceFilename} (${(html.length/1024).toFixed(0)} KB)`;
+      saveBtn.disabled = false;
+    }
+
+    loadHtmlInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const txt = await file.text();
+      setLoaded(txt, file.name);
+    });
+
+    autoLoadBtn.addEventListener("click", async () => {
+      try {
+        const resp = await fetch("Meet - yrt-kczi-csw.html");
+        if (!resp.ok) throw new Error(resp.status);
+        const txt = await resp.text();
+        setLoaded(txt, "Meet - yrt-kczi-csw.html");
+      } catch (err) {
+        statusEl.textContent = "Не вдалось — відкрийте через локальний сервер або скористайтесь «Завантажити Meet HTML».";
+      }
+    });
+
+    saveBtn.addEventListener("click", () => {
+      if (!sourceHtml) return;
+      const out = applyPhotos(sourceHtml, photos);
+      const blob = new Blob([out], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = sourceFilename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+
+    function applyPhotos(html, photos) {
+      // Текстова заміна — Meet HTML лишається байт-в-байт, окрім src на аватарках.
+      // Алгоритм:
+      //  1) Зібрати позиції ВСІХ data-participant-id у файлі — це межі плиток.
+      //  2) Для кожної позиції з ID, у якого є фото, замінити всі
+      //     src="assets/img/placeholder.svg" до наступної межі.
+      const idRe = /data-participant-id="([^"]+)"/g;
+      const occurrences = []; // {pos, pid}
+      let m;
+      while ((m = idRe.exec(html)) !== null) {
+        occurrences.push({ pos: m.index, end: m.index + m[0].length, pid: m[1] });
+      }
+      // Замінюємо src в кожному <img ...> у межах плитки — це працює і коли
+      // src вже data URL (повторне редагування), і коли там placeholder.svg.
+      const imgSrcRe = /<img\b[^>]*?\ssrc="([^"]*)"/g;
+      const edits = [];
+      for (let i = 0; i < occurrences.length; i++) {
+        const occ = occurrences[i];
+        const dataUrl = photos[occ.pid];
+        if (!dataUrl) continue;
+        const bound = (i + 1 < occurrences.length) ? occurrences[i + 1].pos : html.length;
+        imgSrcRe.lastIndex = occ.end;
+        let mm;
+        while ((mm = imgSrcRe.exec(html)) !== null) {
+          if (mm.index >= bound) break;
+          // mm[1] — значення src. Замінюємо тільки його.
+          const valStart = mm.index + mm[0].length - mm[1].length - 1; // позиція першого символу всередині src="..."
+          const valEnd = valStart + mm[1].length;
+          edits.push({ start: valStart, end: valEnd, replacement: dataUrl });
+        }
+      }
+      // Застосовуємо у зворотньому порядку (щоб індекси не зсувались)
+      edits.sort((a, b) => b.start - a.start);
+      let out = html;
+      for (const e of edits) {
+        out = out.slice(0, e.start) + e.replacement + out.slice(e.end);
+      }
+      return out;
+    }
+
+    renderGrid();
+  </script>
+</body>
+</html>
