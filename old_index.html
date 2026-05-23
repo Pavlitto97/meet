@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google Meet Clone</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-icon">M</div>
+        <div>
+          <div class="brand-title">Meet</div>
+          <div class="brand-subtitle">meet.google.com/yrt-kczi-csw</div>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button class="top-action">Керування</button>
+        <button class="top-action">Дії</button>
+        <button class="top-action avatar">М</button>
+      </div>
+    </header>
+
+    <main class="meeting-page">
+      <section class="meeting-view">
+        <div class="preview-card">
+          <div class="preview-header">
+            <div>
+              <div class="preview-title">Микита</div>
+              <div class="preview-subtitle">Ви в цій зустрічі</div>
+            </div>
+            <div class="preview-badge">Live</div>
+          </div>
+
+          <div class="video-frame">
+            <div class="video-message">Ваша камера</div>
+          </div>
+
+          <div class="insights-row">
+            <div class="insight-item">
+              <span>1</span>
+              <p>Учасник</p>
+            </div>
+            <div class="insight-item">
+              <span>12</span>
+              <p>Чати</p>
+            </div>
+            <div class="insight-item">
+              <span>4</span>
+              <p>Запрошення</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="controls-panel">
+          <div class="mic-card">
+            <div class="mic-status">Мікрофон вимкнено</div>
+            <p>Увімкніть звук, коли потрібно</p>
+          </div>
+          <div class="participant-list">
+            <div class="participant-card active">
+              <div class="participant-avatar">М</div>
+              <div>
+                <div>Микита</div>
+                <small>Ви</small>
+              </div>
+            </div>
+            <div class="participant-card">
+              <div class="participant-avatar">А</div>
+              <div>
+                <div>Анастасія</div>
+                <small>На лінії</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside class="sidebar">
+        <div class="meeting-info">
+          <div class="section-title">Відомості про зустріч</div>
+          <p class="meeting-code">Код зустрічі</p>
+          <div class="meeting-code-value">yrt-kczi-csw</div>
+          <button class="copy-button" id="copyButton">Копіювати</button>
+        </div>
+
+        <div class="help-card">
+          <div class="section-title">Поради</div>
+          <p>Підготуйтеся заздалегідь: вимкніть мікрофон, налаштуйте камеру і виберіть тило.</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="call-controls">
+      <button class="control-button toggle-button" id="cameraButton" data-state="on">
+        <span class="icon">📷</span>
+        Вимкнути камеру
+      </button>
+      <button class="control-button leave-button" id="leaveButton">
+        <span class="icon">⏻</span>
+        Піти з дзвінка
+      </button>
+      <button class="control-button toggle-button" id="micButton" data-state="off">
+        <span class="icon">🎙️</span>
+        Увімкнути мікрофон
+      </button>
+    </footer>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

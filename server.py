@@ -19,23 +19,25 @@ from urllib.parse import urlparse, parse_qs
 
 ROOT = Path(__file__).parent
 DB_PATH = ROOT / "data.db"
-MEET_HTML = ROOT / "Meet - yrt-kczi-csw.html"
+MEET_HTML = ROOT / "index.html"
 PORT = 8000
 
-# (device_id, оригінальне ім'я як воно є в HTML, пропустити з UI?)
+# (device_id, оригінальне ім'я як воно є в HTML, дефолтне відображуване ім'я, пропустити з UI?)
 # Pavlo Grinevich (126) і «3 others» (136/137/138) у UI не показуємо.
+# display_name заливається у custom_name при ініціалізації БД — щоб у рендері й
+# редакторі одразу були нормальні Cyrillic-імена замість mojibake-байтів з HTML.
 PARTICIPANTS = [
-    ("spaces/mBsECBRYcS4B/devices/127", "Sandro Machaidze",              False),
-    ("spaces/mBsECBRYcS4B/devices/129", "Ð¡Ð°Ð½Ñ",                       False),
-    ("spaces/mBsECBRYcS4B/devices/131", "Ð\x92Ð°Ð½Ñ",                     False),
-    ("spaces/mBsECBRYcS4B/devices/132", "Ð\x94Ð°Ð½Ñ",                     False),
-    ("spaces/mBsECBRYcS4B/devices/133", "Ð\x94Ð¸Ð¼Ð°",                    False),
-    ("spaces/mBsECBRYcS4B/devices/134", "Ð\x9cÐ¸ÐºÐ¸Ñ\x82Ð°",              False),
-    ("spaces/mBsECBRYcS4B/devices/135", "Ð\x9cÐ¸ÐºÐ¾Ð»Ð°\\",              False),
-    ("spaces/mBsECBRYcS4B/devices/126", "Pavlo Grinevich",                True),
-    ("spaces/mBsECBRYcS4B/devices/136", "Ð\x93Ñ\x80Ð¸Ñ\x88Ð°",             True),
-    ("spaces/mBsECBRYcS4B/devices/137", "Ð\x9fÐ°Ð²Ð»Ð¾",                  True),
-    ("spaces/mBsECBRYcS4B/devices/138", "Ð\x9aÐ¸Ñ\x80Ð¸Ð»Ð¾",              True),
+    ("spaces/mBsECBRYcS4B/devices/127", "Sandro Machaidze",              "Sandro Machaidze", False),
+    ("spaces/mBsECBRYcS4B/devices/129", "Ð¡Ð°Ð½Ñ",                       "Саня",             False),
+    ("spaces/mBsECBRYcS4B/devices/131", "Ð\x92Ð°Ð½Ñ",                     "Ваня",             False),
+    ("spaces/mBsECBRYcS4B/devices/132", "Ð\x94Ð°Ð½Ñ",                     "Даня",             False),
+    ("spaces/mBsECBRYcS4B/devices/133", "Ð\x94Ð¸Ð¼Ð°",                    "Дима",             False),
+    ("spaces/mBsECBRYcS4B/devices/134", "Ð\x9cÐ¸ÐºÐ¸Ñ\x82Ð°",              "Микита",           False),
+    ("spaces/mBsECBRYcS4B/devices/135", "Ð\x9cÐ¸ÐºÐ¾Ð»Ð°\\",              "Микола",           False),
+    ("spaces/mBsECBRYcS4B/devices/126", "Pavlo Grinevich",                None,               True),
+    ("spaces/mBsECBRYcS4B/devices/136", "Ð\x93Ñ\x80Ð¸Ñ\x88Ð°",             None,               True),
+    ("spaces/mBsECBRYcS4B/devices/137", "Ð\x9fÐ°Ð²Ð»Ð¾",                  None,               True),
+    ("spaces/mBsECBRYcS4B/devices/138", "Ð\x9aÐ¸Ñ\x80Ð¸Ð»Ð¾",              None,               True),
 ]
 
 
@@ -74,11 +76,18 @@ def init_db():
                 value TEXT
             )
         """)
-        for pos, (did, name, skipped) in enumerate(PARTICIPANTS):
+        for pos, (did, name, display, skipped) in enumerate(PARTICIPANTS):
             con.execute(
-                "INSERT OR IGNORE INTO participants(device_id, original_name, skipped, position) VALUES(?,?,?,?)",
-                (did, name, int(skipped), pos),
+                "INSERT OR IGNORE INTO participants(device_id, original_name, custom_name, skipped, position) VALUES(?,?,?,?,?)",
+                (did, name, display, int(skipped), pos),
             )
+            # Якщо рядок уже був (стара БД без дефолтних display name) —
+            # підкинемо custom_name лише там, де його ще не задавали вручну.
+            if display:
+                con.execute(
+                    "UPDATE participants SET custom_name = ? WHERE device_id = ? AND (custom_name IS NULL OR custom_name = '')",
+                    (display, did),
+                )
         for k, v in DEFAULT_SETTINGS.items():
             con.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)", (k, v))
 
@@ -92,6 +101,23 @@ def get_settings() -> dict:
 ORIGINAL_MEETING_CODE = "yrt-kczi-csw"
 ORIGINAL_TIME = "10:34"
 ORIGINAL_PERIOD = "PM"
+
+# Emoji у нижньому реакц-тулбарі. cleanup/rewrite зачистили оригінальні
+# fonts.gstatic.com URL і поставили placeholder.svg для всіх <img class="iiJ4W">.
+# Тут мапимо data-emoji на локальні PNG з noto-emoji у assets/img/emoji/.
+#
+# Атрибут data-emoji у файлі — double-encoded mojibake: оригінальні UTF-8 байти
+# emoji (наприклад F0 9F 92 96 для 💖) ще раз пройшли утф-8-кодування через
+# latin1-інтерпретацію → кожен байт перетворився на 2 байти UTF-8. Тож після
+# read_text(utf-8) маємо рядок типу "ð\x9f\x92\x96" замість "💖". Ключі словника
+# будуємо тим самим перетворенням, щоб збігалось.
+_EMOJI_REAL = {
+    "💖": "1f496", "👍": "1f44d", "🎉": "1f389", "👏": "1f44f", "😂": "1f602",
+    "😮": "1f62e", "😢": "1f622", "🤔": "1f914", "👎": "1f44e", "🍆": "1f346",
+}
+EMOJI_CODEPOINTS = {
+    e.encode("utf-8").decode("latin1"): code for e, code in _EMOJI_REAL.items()
+}
 
 
 # ─── Рендер Meet HTML ──────────────────────────────────────────────────────
@@ -164,6 +190,30 @@ def render_meet() -> str:
             lambda m: m.group(1) + new_period + m.group(2),
             html, count=1,
         )
+
+    # Emoji-кнопки реакцій: cleanup замінив усі fonts.gstatic.com PNG-и на
+    # placeholder.svg → видно ряд однакових сірих гуртків. Підміняємо src за
+    # data-emoji на локальний PNG з noto-emoji.
+    def _emoji_sub(m: re.Match) -> str:
+        emoji = m.group("emoji")
+        code = EMOJI_CODEPOINTS.get(emoji)
+        if not code:
+            return m.group(0)
+        return f'{m.group("pre")}src="assets/img/emoji/{code}.png"{m.group("post")}'
+
+    html = re.sub(
+        r'(?P<pre><img\b[^>]*?\bdata-emoji="(?P<emoji>[^"]+)"[^>]*?\s)'
+        r'src="[^"]*"'
+        r'(?P<post>[^>]*?>)',
+        _emoji_sub,
+        html,
+    )
+
+    # Відносні шляхи в HTML (`assets/...`) при відкритті через /api/render
+    # резолвились би відносно /api/ → 404 на шрифти/іконки. <base href="/">
+    # змушує браузер брати їх від кореня — той самий ефект, що при сирому
+    # index.html, але без переписування атрибутів.
+    html = html.replace("<head>", '<head><base href="/">', 1)
     return html
 
 
@@ -229,7 +279,7 @@ class H(BaseHTTPRequestHandler):
             headers = {}
             if query.get("download"):
                 headers["Content-Disposition"] = (
-                    'attachment; filename="Meet - yrt-kczi-csw.html"'
+                    'attachment; filename="index.html"'
                 )
             return self._text(200, "text/html; charset=utf-8", html, headers)
 

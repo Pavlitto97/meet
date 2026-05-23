@@ -7,8 +7,8 @@
 ## Структура проекту
 
 ```
-Meet - yrt-kczi-csw.html      ← Збережена сторінка Meet (~1.3 MB, single line)
-Meet - yrt-kczi-csw.html.bak  ← Бекап оригіналу (повторюй із .bak якщо щось зламав)
+index.html                    ← Збережена сторінка Meet (~1.3 MB, single line)
+index.html.bak                ← Бекап оригіналу (повторюй із .bak якщо щось зламав)
 editor.html                   ← Веб-редактор (UI), бере дані з server.py через REST
 server.py                     ← stdlib HTTP-сервер + SQLite + рендер Meet HTML
 data.db                       ← SQLite, створюється при першому запуску. У git не йде.
@@ -18,7 +18,7 @@ assets/                       ← Локалізовані шрифти/ікон
 cleanup.py                    ← Прибирає <script>, обробники onX, посилання на google.*
 rewrite_html.py               ← Замінює google CDN-URL на локальні assets/
 download_assets.sh            ← Тягне всі assets із Google CDN у assets/
-index.html, script.js, styles.css ← Стара заготовка простого Meet-clone (не використовується редактором, але присутня)
+old_index.html, old_script.js, old_styles.css ← Стара заготовка простого Meet-clone (не використовується редактором, залишена для довідки)
 ```
 
 ## Як запускати
@@ -71,7 +71,7 @@ settings (
 
 ## Як працює рендер (`server.py:render_meet`)
 
-1. Читає `Meet - yrt-kczi-csw.html` з диска (UTF-8).
+1. Читає `index.html` з диска (UTF-8).
 2. Збирає позиції **всіх** `data-participant-id="..."` у файлі. Між двома сусідніми
    позиціями — DOM-підграф однієї плитки (тайл у сітці АБО запис у списку
    учасників: ID повторюються в обох секціях).
@@ -120,7 +120,7 @@ settings (
   оригінальне ім’я) → редагувати `PARTICIPANTS` у `server.py`, видалити
   `data.db`, перезапустити сервер.
 - **Дані псуються при рендері** — перш ніж копати у `render_meet`, відкоти
-  `Meet - yrt-kczi-csw.html` з `.bak`.
+  `index.html` з `.bak`.
 - **Безпека шляхів**: `_serve_file` обмежений `ROOT` через
   `target.relative_to(ROOT.resolve())`. Не приймає `..` поза кореня.
 - **Великі бінарні аватарки**: зберігаються як BLOB у SQLite. Якщо `data.db`
@@ -143,5 +143,5 @@ settings (
 - Frontend — нативний HTML/JS, без фреймворків і бандлерів.
 - Імена/код зустрічі/час — текстова заміна, не DOM-парсинг. DOMParser
   перепаковує атрибути і втрачає особливості Meet markup.
-- Зміни у `Meet - yrt-kczi-csw.html` НІКОЛИ не пишуться напряму — лише
+- Зміни у `index.html` НІКОЛИ не пишуться напряму — лише
   рендер у пам’яті через `/api/render`. Оригінал недоторканий.
