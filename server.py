@@ -8,19 +8,34 @@ Meet HTML з застосованими правками. Без зовнішн�
     python3 server.py
     Відкрити http://localhost:8000/editor.html
 """
+import base64
 import json
+import os
 import re
 import sqlite3
 import sys
+import threading
+import traceback
+import urllib.request
+import urllib.error
+import uuid
 from base64 import b64encode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 ROOT = Path(__file__).parent
 DB_PATH = ROOT / "data.db"
 MEET_HTML = ROOT / "index.html"
+PROMPT_FILE = ROOT / "promt.md"
 PORT = 8000
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
+# Slug-и, що використовуються у /api/generate і UI
+DEFAULT_GEN_MODEL = "google/gemini-2.5-flash-image"
+DEFAULT_GEN_PROVIDER = "google-ai-studio"
+DEFAULT_GEN_TIER = "default"
 
 # (device_id, оригінальне ім'я як воно є в HTML, дефолтне відображуване ім'я, пропустити з UI?)
 # Pavlo Grinevich (126) і «3 others» (136/137/138) у UI не показуємо.
@@ -50,10 +65,19 @@ def db():
 
 
 DEFAULT_SETTINGS = {
-    "time":         "10:34",          # number part у footer
-    "period":       "PM",              # AM/PM
-    "meeting_code": "yrt-kczi-csw",    # хеш зустрічі
+    "time":               "10:34",                  # number part у footer
+    "period":             "PM",                      # AM/PM
+    "meeting_code":       "yrt-kczi-csw",            # хеш зустрічі
+    "openrouter_api_key": "",                        # порожньо = не задано
+    "gen_model":          DEFAULT_GEN_MODEL,
+    "gen_provider":       DEFAULT_GEN_PROVIDER,
+    "gen_tier":           DEFAULT_GEN_TIER,
 }
+
+# Налаштування, які можна змінювати через /api/settings PUT.
+ALLOWED_SETTING_KEYS = set(DEFAULT_SETTINGS.keys())
+# Секретні поля — назовні віддаємо лише факт "встановлено/ні".
+SECRET_SETTING_KEYS = {"openrouter_api_key"}
 
 
 def init_db():
@@ -67,13 +91,37 @@ def init_db():
                 avatar_mime   TEXT,
                 skipped       INTEGER NOT NULL DEFAULT 0,
                 position      INTEGER NOT NULL,
+                user_added    INTEGER NOT NULL DEFAULT 0,
                 updated_at    TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Лагідна міграція — якщо стара БД без user_added, додаємо колонку.
+        cols = {r[1] for r in con.execute("PRAGMA table_info(participants)")}
+        if "user_added" not in cols:
+            con.execute("ALTER TABLE participants ADD COLUMN user_added INTEGER NOT NULL DEFAULT 0")
         con.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT
+            )
+        """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS generations (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                participant_id TEXT,
+                prompt         TEXT NOT NULL,
+                model          TEXT NOT NULL,
+                provider       TEXT NOT NULL,
+                service_tier   TEXT NOT NULL,
+                status         TEXT NOT NULL DEFAULT 'pending',
+                error          TEXT,
+                image          BLOB,
+                image_mime     TEXT,
+                cost_usd       REAL,
+                prompt_tokens  INTEGER,
+                output_tokens  INTEGER,
+                created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+                finished_at    TEXT
             )
         """)
         for pos, (did, name, display, skipped) in enumerate(PARTICIPANTS):
@@ -90,11 +138,217 @@ def init_db():
                 )
         for k, v in DEFAULT_SETTINGS.items():
             con.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)", (k, v))
+        # Підтягуємо OPENROUTER_API_KEY з process env / .env. Якщо файл .env є
+        # — він пріоритетніший за DB (тобі простіше: змінив у .env → перезапустив).
+        # Видалив .env → DB-значення (наприклад, з UI) лишається.
+        env_key = _load_env_key("OPENROUTER_API_KEY")
+        if env_key:
+            con.execute(
+                "INSERT INTO settings(key, value) VALUES('openrouter_api_key', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (env_key,),
+            )
 
 
-def get_settings() -> dict:
+def _load_env_key(name: str) -> str:
+    """Спершу process env, потім .env у корені проєкту. Парсимо примітивно:
+    KEY=VALUE на рядок, # — коментар, лапки навколо value прибираємо."""
+    if os.environ.get(name):
+        return os.environ[name].strip()
+    env_file = ROOT / ".env"
+    if not env_file.is_file():
+        return ""
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        if k.strip() == name:
+            v = v.strip()
+            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            return v
+    return ""
+
+
+def get_settings(*, include_secrets: bool = False) -> dict:
     with db() as con:
-        return {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM settings")}
+        rows = {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM settings")}
+    if include_secrets:
+        return rows
+    # Назовні замінюємо секрети на boolean-індикатор "встановлено?".
+    public = {}
+    for k, v in rows.items():
+        if k in SECRET_SETTING_KEYS:
+            continue
+        public[k] = v
+    for k in SECRET_SETTING_KEYS:
+        public[f"{k}_set"] = bool(rows.get(k))
+    return public
+
+
+def get_setting(key: str) -> str:
+    with db() as con:
+        row = con.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else ""
+
+
+# ─── OpenRouter ────────────────────────────────────────────────────────────
+
+def _openrouter_headers(api_key: str) -> dict:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type":  "application/json",
+        # Доброзичливі заголовки рекомендовані доками OpenRouter
+        "HTTP-Referer":  "http://localhost:8000/",
+        "X-Title":       "Meet Editor",
+    }
+
+
+def fetch_openrouter_credits(api_key: str) -> dict:
+    req = urllib.request.Request(
+        OPENROUTER_CREDITS_URL,
+        headers=_openrouter_headers(api_key),
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def _parse_data_url(data_url: str) -> tuple[str, bytes]:
+    m = re.match(r"data:([^;]+);base64,(.+)", data_url, re.DOTALL)
+    if not m:
+        raise ValueError("expected data:<mime>;base64,<...>")
+    return m.group(1), base64.b64decode(m.group(2))
+
+
+def _avatar_data_url(participant_id: str) -> str | None:
+    with db() as con:
+        row = con.execute(
+            "SELECT avatar, avatar_mime FROM participants WHERE device_id = ?",
+            (participant_id,),
+        ).fetchone()
+    if not row or not row["avatar"]:
+        return None
+    return f"data:{row['avatar_mime']};base64,{b64encode(row['avatar']).decode()}"
+
+
+def call_openrouter_image(
+    api_key: str,
+    *,
+    model: str,
+    provider: str,
+    service_tier: str,
+    prompt: str,
+    input_image_data_url: str | None,
+) -> dict:
+    """Викликає chat.completions з modalities=[text,image] і повертає JSON-відповідь."""
+    # OpenRouter повертає 404 "No endpoints support modalities text,image" якщо
+    # модель не вміє генерувати картинки (напр. google/gemini-3.5-flash —
+    # текстова). Раніше відсікаємо з зрозумілою помилкою.
+    if "image" not in model.lower():
+        raise RuntimeError(
+            f"Модель «{model}» не підтримує генерацію зображень. "
+            f"Вибери модель з «image» в назві (напр. google/gemini-2.5-flash-image)."
+        )
+    content: list = [{"type": "text", "text": prompt}]
+    if input_image_data_url:
+        content.append({"type": "image_url", "image_url": {"url": input_image_data_url}})
+    body: dict = {
+        "model": model,
+        "modalities": ["text", "image"],
+        "messages": [{"role": "user", "content": content}],
+        # Просимо повернути cost у usage.
+        "usage": {"include": True},
+    }
+    if service_tier and service_tier != "default":
+        body["service_tier"] = service_tier
+    if provider:
+        body["provider"] = {"only": [provider], "allow_fallbacks": False}
+    req = urllib.request.Request(
+        OPENROUTER_URL,
+        data=json.dumps(body).encode("utf-8"),
+        headers=_openrouter_headers(api_key),
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # OpenRouter повертає JSON з error.message — піднімаємо його як виключення.
+        err_body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenRouter HTTP {e.code}: {err_body}") from e
+
+
+def _extract_image_from_response(resp: dict) -> tuple[str, bytes]:
+    """Витягує першу картинку з відповіді OpenRouter.
+
+    Підтримуємо два формати: message.images=[{image_url:{url:data:...}}] та
+    message.content як список з елементом type=image_url.
+    """
+    choices = resp.get("choices") or []
+    if not choices:
+        raise RuntimeError("OpenRouter: choices порожній")
+    msg = choices[0].get("message", {}) or {}
+    # Варіант 1: окремий масив images
+    for img in msg.get("images") or []:
+        url = (img.get("image_url") or {}).get("url") if isinstance(img, dict) else None
+        if url and url.startswith("data:"):
+            return _parse_data_url(url)
+    # Варіант 2: content як масив частин
+    content = msg.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                url = (part.get("image_url") or {}).get("url")
+                if url and url.startswith("data:"):
+                    return _parse_data_url(url)
+    raise RuntimeError("OpenRouter: у відповіді немає image_url у data:base64 форматі")
+
+
+def _run_generation(gen_id: int):
+    """Виконується у фоновому потоці. Оновлює рядок generations."""
+    try:
+        with db() as con:
+            row = con.execute(
+                "SELECT id, participant_id, prompt, model, provider, service_tier "
+                "FROM generations WHERE id = ?",
+                (gen_id,),
+            ).fetchone()
+        if not row:
+            return
+        api_key = get_setting("openrouter_api_key")
+        if not api_key:
+            raise RuntimeError("OpenRouter API key не задано. Введи його у налаштуваннях.")
+        input_url = _avatar_data_url(row["participant_id"]) if row["participant_id"] else None
+        resp = call_openrouter_image(
+            api_key,
+            model=row["model"],
+            provider=row["provider"],
+            service_tier=row["service_tier"],
+            prompt=row["prompt"],
+            input_image_data_url=input_url,
+        )
+        mime, blob = _extract_image_from_response(resp)
+        usage = resp.get("usage") or {}
+        cost = usage.get("cost")
+        ptok = usage.get("prompt_tokens")
+        otok = usage.get("completion_tokens") or usage.get("output_tokens")
+        with db() as con:
+            con.execute(
+                "UPDATE generations SET status='done', image=?, image_mime=?, "
+                "cost_usd=?, prompt_tokens=?, output_tokens=?, "
+                "finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (blob, mime, cost, ptok, otok, gen_id),
+            )
+    except Exception as e:  # noqa: BLE001 — фіксуємо у статусі
+        msg = "".join(traceback.format_exception_only(type(e), e)).strip()
+        with db() as con:
+            con.execute(
+                "UPDATE generations SET status='error', error=?, "
+                "finished_at=CURRENT_TIMESTAMP WHERE id=?",
+                (msg, gen_id),
+            )
 
 
 # Початковий код зустрічі — щоб точно знати, що замінювати на новий.
@@ -257,13 +511,14 @@ class H(BaseHTTPRequestHandler):
             with db() as con:
                 rows = list(con.execute(
                     "SELECT device_id, original_name, custom_name, "
-                    "avatar IS NOT NULL AS has_avatar, avatar_mime, skipped, position "
+                    "avatar IS NOT NULL AS has_avatar, avatar_mime, skipped, "
+                    "user_added, position "
                     "FROM participants ORDER BY position"
                 ))
             return self._json(200, [dict(r) for r in rows])
 
         if path.startswith("/api/avatar/"):
-            did = path[len("/api/avatar/"):]
+            did = unquote(path[len("/api/avatar/"):])
             with db() as con:
                 row = con.execute(
                     "SELECT avatar, avatar_mime FROM participants WHERE device_id = ?",
@@ -283,6 +538,62 @@ class H(BaseHTTPRequestHandler):
                 )
             return self._text(200, "text/html; charset=utf-8", html, headers)
 
+        if path == "/api/prompt":
+            try:
+                txt = PROMPT_FILE.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                txt = ""
+            return self._json(200, {"prompt": txt})
+
+        if path == "/api/credits":
+            api_key = get_setting("openrouter_api_key")
+            if not api_key:
+                return self._json(400, {"error": "API key не задано"})
+            try:
+                data = fetch_openrouter_credits(api_key)
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                return self._json(e.code, {"error": f"HTTP {e.code}: {body}"})
+            except Exception as e:  # noqa: BLE001
+                return self._json(500, {"error": str(e)})
+            return self._json(200, data)
+
+        if path == "/api/generations":
+            participant = (query.get("participant_id") or [None])[0]
+            status = (query.get("status") or [None])[0]
+            sql = (
+                "SELECT id, participant_id, prompt, model, provider, service_tier, "
+                "status, error, image IS NOT NULL AS has_image, image_mime, "
+                "cost_usd, prompt_tokens, output_tokens, created_at, finished_at "
+                "FROM generations WHERE 1=1"
+            )
+            args: list = []
+            if participant:
+                sql += " AND participant_id = ?"
+                args.append(participant)
+            if status:
+                sql += " AND status = ?"
+                args.append(status)
+            sql += " ORDER BY id DESC LIMIT 200"
+            with db() as con:
+                rows = [dict(r) for r in con.execute(sql, args)]
+            return self._json(200, rows)
+
+        if path.startswith("/api/generation-image/"):
+            try:
+                gid = int(path[len("/api/generation-image/"):])
+            except ValueError:
+                return self._text(400, "text/plain", b"bad id")
+            with db() as con:
+                row = con.execute(
+                    "SELECT image, image_mime FROM generations WHERE id = ?",
+                    (gid,),
+                ).fetchone()
+            if not row or not row["image"]:
+                return self._text(404, "text/plain", b"no image")
+            return self._text(200, row["image_mime"], row["image"],
+                              {"Cache-Control": "no-store"})
+
         # статика з ROOT
         return self._serve_file(path)
 
@@ -290,21 +601,28 @@ class H(BaseHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/api/settings":
             body = self._read_json()
-            allowed = {"time", "period", "meeting_code"}
-            updates = {k: v for k, v in body.items() if k in allowed}
+            updates = {k: v for k, v in body.items() if k in ALLOWED_SETTING_KEYS}
             if not updates:
                 return self._json(400, {"error": "no allowed keys"})
             with db() as con:
                 for k, v in updates.items():
+                    # Порожній рядок для секретів = очистити.
+                    val = "" if v is None else str(v)
                     con.execute(
                         "INSERT INTO settings(key, value) VALUES(?,?) "
                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                        (k, v),
+                        (k, val),
                     )
             return self._json(200, {"ok": True})
 
+        if u.path == "/api/prompt":
+            body = self._read_json()
+            txt = body.get("prompt", "")
+            PROMPT_FILE.write_text(txt, encoding="utf-8")
+            return self._json(200, {"ok": True})
+
         if u.path.startswith("/api/participants/"):
-            did = u.path[len("/api/participants/"):]
+            did = unquote(u.path[len("/api/participants/"):])
             body = self._read_json()
             fields = {}
             if "custom_name" in body:
@@ -315,12 +633,12 @@ class H(BaseHTTPRequestHandler):
                     fields["avatar"] = None
                     fields["avatar_mime"] = None
                 else:
-                    m = re.match(r"data:([^;]+);base64,(.+)", v, re.DOTALL)
-                    if not m:
+                    try:
+                        mime, blob = _parse_data_url(v)
+                    except ValueError:
                         return self._json(400, {"error": "bad data URL"})
-                    import base64
-                    fields["avatar_mime"] = m.group(1)
-                    fields["avatar"] = base64.b64decode(m.group(2))
+                    fields["avatar_mime"] = mime
+                    fields["avatar"] = blob
             if not fields:
                 return self._json(400, {"error": "nothing to update"})
             sets = ", ".join(f"{k} = ?" for k in fields)
@@ -335,18 +653,123 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True})
         return self._json(404, {"error": "no route"})
 
+    def do_POST(self):
+        u = urlparse(self.path)
+
+        if u.path == "/api/participants":
+            body = self._read_json()
+            name = (body.get("custom_name") or "").strip()
+            if not name:
+                return self._json(400, {"error": "custom_name required"})
+            # Локальний ID для віртуального учасника — не зачіпає рендер
+            # index.html (там тільки spaces/.../devices/NNN з фіксованого списку).
+            did = f"local/{uuid.uuid4().hex[:12]}"
+            with db() as con:
+                row = con.execute("SELECT COALESCE(MAX(position), -1) AS m FROM participants").fetchone()
+                pos = (row["m"] or 0) + 1
+                con.execute(
+                    "INSERT INTO participants(device_id, original_name, custom_name, "
+                    "skipped, position, user_added) VALUES(?,?,?,0,?,1)",
+                    (did, name, name, pos),
+                )
+            return self._json(200, {"device_id": did})
+
+        if u.path == "/api/generate":
+            body = self._read_json()
+            pid = body.get("participant_id")
+            prompt = (body.get("prompt") or "").strip()
+            if not prompt:
+                try:
+                    prompt = PROMPT_FILE.read_text(encoding="utf-8").strip()
+                except FileNotFoundError:
+                    prompt = ""
+            if not prompt:
+                return self._json(400, {"error": "prompt порожній"})
+            s = get_settings(include_secrets=True)
+            if not s.get("openrouter_api_key"):
+                return self._json(400, {"error": "OpenRouter API key не задано"})
+            model = body.get("model") or s.get("gen_model") or DEFAULT_GEN_MODEL
+            provider = body.get("provider") or s.get("gen_provider") or DEFAULT_GEN_PROVIDER
+            tier = body.get("service_tier") or s.get("gen_tier") or DEFAULT_GEN_TIER
+            with db() as con:
+                cur = con.execute(
+                    "INSERT INTO generations(participant_id, prompt, model, provider, service_tier) "
+                    "VALUES(?,?,?,?,?)",
+                    (pid, prompt, model, provider, tier),
+                )
+                gen_id = cur.lastrowid
+            t = threading.Thread(target=_run_generation, args=(gen_id,), daemon=True)
+            t.start()
+            return self._json(200, {"id": gen_id})
+
+        if u.path.startswith("/api/generations/") and u.path.endswith("/approve"):
+            try:
+                gid = int(u.path[len("/api/generations/"):-len("/approve")])
+            except ValueError:
+                return self._json(400, {"error": "bad id"})
+            with db() as con:
+                row = con.execute(
+                    "SELECT participant_id, image, image_mime, status "
+                    "FROM generations WHERE id = ?",
+                    (gid,),
+                ).fetchone()
+                if not row:
+                    return self._json(404, {"error": "not found"})
+                if row["status"] != "done" or not row["image"]:
+                    return self._json(400, {"error": "генерація ще не готова"})
+                pid = row["participant_id"]
+                if not pid:
+                    return self._json(400, {"error": "генерація не привʼязана до учасника"})
+                cur = con.execute(
+                    "UPDATE participants SET avatar=?, avatar_mime=?, "
+                    "updated_at=CURRENT_TIMESTAMP WHERE device_id=?",
+                    (row["image"], row["image_mime"], pid),
+                )
+                if cur.rowcount == 0:
+                    return self._json(404, {"error": "учасника не знайдено"})
+                con.execute("DELETE FROM generations WHERE id = ?", (gid,))
+            return self._json(200, {"ok": True})
+
+        return self._json(404, {"error": "no route"})
+
     def do_DELETE(self):
         u = urlparse(self.path)
         if u.path.startswith("/api/participants/"):
-            did = u.path[len("/api/participants/"):]
+            did = unquote(u.path[len("/api/participants/"):])
+            q = parse_qs(u.query)
+            hard = q.get("hard", ["0"])[0] in ("1", "true")
             with db() as con:
-                con.execute(
-                    "UPDATE participants SET custom_name=NULL, avatar=NULL, "
-                    "avatar_mime=NULL, updated_at=CURRENT_TIMESTAMP "
-                    "WHERE device_id = ?",
-                    (did,),
-                )
+                if hard:
+                    # Видаляємо повністю — це безпечно лише для user_added,
+                    # бо інакше при наступному старті init_db() повторно
+                    # вставить дефолтний рядок.
+                    row = con.execute(
+                        "SELECT user_added FROM participants WHERE device_id = ?",
+                        (did,),
+                    ).fetchone()
+                    if not row:
+                        return self._json(404, {"error": "not found"})
+                    if not row["user_added"]:
+                        return self._json(400, {"error": "не можна видалити дефолтного учасника"})
+                    con.execute("DELETE FROM participants WHERE device_id = ?", (did,))
+                else:
+                    con.execute(
+                        "UPDATE participants SET custom_name=NULL, avatar=NULL, "
+                        "avatar_mime=NULL, updated_at=CURRENT_TIMESTAMP "
+                        "WHERE device_id = ?",
+                        (did,),
+                    )
             return self._json(200, {"ok": True})
+
+        if u.path.startswith("/api/generations/"):
+            try:
+                gid = int(u.path[len("/api/generations/"):])
+            except ValueError:
+                return self._json(400, {"error": "bad id"})
+            with db() as con:
+                con.execute("DELETE FROM generations WHERE id = ?", (gid,))
+            return self._json(200, {"ok": True})
+
         return self._json(404, {"error": "no route"})
 
     def _serve_file(self, path):

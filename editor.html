@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <title>Meet — редактор</title>
+  <link rel="stylesheet" href="assets/vendor/flatpickr/flatpickr.min.css">
+  <link rel="stylesheet" href="assets/vendor/flatpickr/dark.css">
+  <script src="assets/vendor/flatpickr/flatpickr.min.js"></script>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -61,7 +64,8 @@
       font-size: 12px;
       color: #9aa0a6;
     }
-    .field input {
+    .field input,
+    .field select {
       background: #3c4043;
       color: #e8eaed;
       border: 1px solid transparent;
@@ -71,7 +75,21 @@
       font-family: inherit;
       min-width: 140px;
     }
-    .field input:focus { outline: none; border-color: #8ab4f8; }
+    .field input:focus,
+    .field select:focus { outline: none; border-color: #8ab4f8; }
+    .input-with-btn { display: flex; gap: 6px; align-items: stretch; }
+    .input-with-btn input { flex: 1; }
+    .icon-btn {
+      background: #3c4043;
+      border: none;
+      color: #e8eaed;
+      width: 36px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0;
+    }
+    .icon-btn:hover { background: #4a4d51; }
 
     .grid {
       display: grid;
@@ -117,7 +135,9 @@
     .slot input[type=file] { display: none; }
     .row { display: flex; gap: 6px; align-items: center; }
     .row .file-btn,
-    .row .clear-btn {
+    .row .clear-btn,
+    .row .gen-btn,
+    .row .del-btn {
       background: #3c4043;
       color: #e8eaed;
       font-size: 12px;
@@ -129,7 +149,130 @@
       font-family: inherit;
       text-align: center;
     }
-    .row .clear-btn { flex: 0 0 auto; }
+    .row .clear-btn,
+    .row .del-btn,
+    .row .gen-btn { flex: 0 0 auto; }
+    .row .gen-btn { background: #1f3a5a; color: #aecbfa; }
+    .row .gen-btn:hover { background: #294c75; }
+    .row .del-btn { background: #4a2222; color: #f6aea9; }
+    .row .del-btn:hover { background: #5a2a2a; }
+    .slot .user-tag {
+      font-size: 11px;
+      color: #aecbfa;
+      background: #1f3a5a;
+      padding: 2px 6px;
+      border-radius: 4px;
+      display: inline-block;
+      width: fit-content;
+    }
+    .slot.busy { outline: 2px solid #8ab4f8; }
+    .slot .gen-status {
+      font-size: 11px;
+      color: #8ab4f8;
+      min-height: 14px;
+    }
+    .slot .gen-status.err { color: #f28b82; }
+
+    .ai-panel {
+      background: #2d2e30;
+      padding: 16px;
+      border-radius: 10px;
+      max-width: 1100px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+    .ai-panel .balance {
+      grid-column: span 2;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 13px;
+      color: #9aa0a6;
+    }
+    .ai-panel .balance .value {
+      color: #e8eaed;
+      font-size: 18px;
+      font-weight: 500;
+    }
+    .ai-panel .balance button {
+      align-self: flex-start;
+      background: transparent;
+      color: #8ab4f8;
+      border: 1px solid #5f6368;
+      padding: 4px 10px;
+      font-size: 12px;
+      border-radius: 14px;
+    }
+
+    .prompt-box textarea {
+      width: 100%;
+      max-width: 1100px;
+      min-height: 160px;
+      background: #2d2e30;
+      color: #e8eaed;
+      border: 1px solid #3c4043;
+      border-radius: 8px;
+      padding: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+      font-size: 12px;
+      resize: vertical;
+    }
+    .prompt-box textarea:focus { outline: none; border-color: #8ab4f8; }
+
+    /* модалка апруву */
+    .modal-bg {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.6);
+      display: none;
+      align-items: center; justify-content: center;
+      z-index: 100;
+      padding: 24px;
+    }
+    .modal-bg.show { display: flex; }
+    .modal {
+      background: #2d2e30;
+      border-radius: 12px;
+      max-width: 720px;
+      width: 100%;
+      max-height: 90vh;
+      overflow: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .modal h3 { margin: 0; font-size: 16px; font-weight: 500; }
+    .modal .gen-preview {
+      background: #1a1a1c;
+      border-radius: 8px;
+      max-height: 60vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .modal .gen-preview img {
+      max-width: 100%;
+      max-height: 60vh;
+      object-fit: contain;
+    }
+    .modal .gen-meta {
+      font-size: 12px;
+      color: #9aa0a6;
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .modal .modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .modal .modal-actions button.reject {
+      background: #4a2222; color: #f6aea9;
+    }
+    .add-participant-bar { margin-bottom: 12px; }
   </style>
 </head>
 <body>
@@ -150,20 +293,78 @@
   <div class="meeting-bar">
     <div class="field">
       <label for="f-time">Час</label>
-      <input id="f-time" placeholder="10:34">
-    </div>
-    <div class="field">
-      <label for="f-period">Період</label>
-      <input id="f-period" placeholder="PM" maxlength="2" style="min-width:60px">
+      <input id="f-time" placeholder="10:34 PM" readonly>
     </div>
     <div class="field">
       <label for="f-code">Код зустрічі</label>
-      <input id="f-code" placeholder="yrt-kczi-csw">
+      <div class="input-with-btn">
+        <input id="f-code" placeholder="yrt-kczi-csw">
+        <button type="button" class="icon-btn" id="gen-code" title="Згенерувати випадковий код">🎲</button>
+      </div>
     </div>
   </div>
 
+  <h2>Генерація аватарок (OpenRouter)</h2>
+  <div class="ai-panel">
+    <div class="field">
+      <label for="f-key">OpenRouter API key</label>
+      <input id="f-key" type="password" placeholder="sk-or-..." autocomplete="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore>
+    </div>
+    <div class="field">
+      <label for="f-model">Модель</label>
+      <select id="f-model">
+        <option value="google/gemini-2.5-flash-image">gemini-2.5-flash-image (image gen)</option>
+        <option value="google/gemini-3.5-flash" disabled>gemini-3.5-flash (text-only — без картинок)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="f-provider">Провайдер</label>
+      <select id="f-provider">
+        <option value="google-ai-studio">google-ai-studio</option>
+        <option value="google-vertex">google-vertex / global</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="f-tier">Тариф</label>
+      <select id="f-tier">
+        <option value="flex">Flex · 0.5×</option>
+        <option value="default" selected>Default · 1×</option>
+        <option value="priority">Priority · 1.8×</option>
+      </select>
+    </div>
+    <div class="balance">
+      <span>Баланс OpenRouter</span>
+      <span class="value" id="f-balance">—</span>
+      <button type="button" id="refresh-balance">Оновити</button>
+    </div>
+  </div>
+
+  <h2>Промт для генерації <span style="font-weight:400;color:#9aa0a6;font-size:12px;text-transform:none;letter-spacing:0">(файл promt.md)</span></h2>
+  <div class="prompt-box">
+    <textarea id="f-prompt" spellcheck="false" placeholder="Завантажується..."></textarea>
+  </div>
+
   <h2>Учасники</h2>
+  <div class="add-participant-bar">
+    <button id="add-participant" class="secondary">+ Додати учасника</button>
+  </div>
   <div class="grid" id="grid"></div>
+
+  <h2 id="queue-header" hidden>Чекає на апрув</h2>
+  <div class="grid" id="queue"></div>
+
+  <div class="modal-bg" id="modal-bg">
+    <div class="modal">
+      <h3 id="modal-title">Перегляд генерації</h3>
+      <div class="gen-preview" id="modal-preview"></div>
+      <div class="gen-meta" id="modal-meta"></div>
+      <div class="modal-actions">
+        <button class="secondary" id="modal-close">Закрити</button>
+        <button class="reject" id="modal-reject">Видалити</button>
+        <button id="modal-approve">Прийняти як аватар</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     const statusEl = document.getElementById("status");
@@ -204,50 +405,99 @@
     }
 
     // ─── налаштування зустрічі ─────────────────────────────────────────
-    const settingFields = {
-      time:         document.getElementById("f-time"),
-      period:       document.getElementById("f-period"),
-      meeting_code: document.getElementById("f-code"),
-    };
+    const codeInput = document.getElementById("f-code");
+    const timeInput = document.getElementById("f-time");
 
-    async function loadSettings() {
-      const s = await api("GET", "/api/settings");
-      for (const [k, el] of Object.entries(settingFields)) {
-        el.value = s[k] || "";
-      }
+    // flatpickr — пікер часу у 12-годинному форматі, AM/PM ввімкнено.
+    // Час і період зберігаємо в settings окремо (так зберігає сервер).
+    let fp = null;
+
+    function parseTimeString(str) {
+      // "10:34 PM" → { time: "10:34", period: "PM" }
+      const m = String(str).trim().match(/^(\d{1,2}:\d{2})\s*(AM|PM)$/i);
+      if (!m) return null;
+      return { time: m[1], period: m[2].toUpperCase() };
     }
 
-    for (const [k, el] of Object.entries(settingFields)) {
-      el.addEventListener("change", async () => {
-        try {
-          await api("PUT", "/api/settings", { [k]: el.value });
-          setStatus("Збережено", "ok");
-        } catch (e) { setStatus(e.message, "err"); }
+    async function loadSettings(preloaded) {
+      const s = preloaded || await api("GET", "/api/settings");
+      codeInput.value = s.meeting_code || "";
+      const display = `${s.time || "10:34"} ${s.period || "PM"}`;
+      timeInput.value = display;
+      fp = flatpickr(timeInput, {
+        enableTime: true,
+        noCalendar: true,
+        dateFormat: "h:i K",     // 12-год + AM/PM
+        time_24hr: false,
+        defaultDate: display,
+        allowInput: false,
+        onChange: async (_, dateStr) => {
+          const parsed = parseTimeString(dateStr);
+          if (!parsed) return;
+          try {
+            await api("PUT", "/api/settings", parsed);
+            setStatus("Збережено", "ok");
+          } catch (e) { setStatus(e.message, "err"); }
+        },
       });
     }
+
+    codeInput.addEventListener("change", async () => {
+      try {
+        await api("PUT", "/api/settings", { meeting_code: codeInput.value });
+        setStatus("Збережено", "ok");
+      } catch (e) { setStatus(e.message, "err"); }
+    });
+
+    // обʼєкт для зворотньої сумісності генератора коду нижче
+    const settingFields = { meeting_code: codeInput };
+
+    // Генератор коду зустрічі у форматі xxx-xxxx-xxx (як у Google Meet).
+    function randomMeetingCode() {
+      const alphabet = "abcdefghijkmnopqrstuvwxyz"; // без l — щоб не плутати з 1
+      const group = n => Array.from({ length: n }, () =>
+        alphabet[Math.floor(Math.random() * alphabet.length)]
+      ).join("");
+      return `${group(3)}-${group(4)}-${group(3)}`;
+    }
+
+    document.getElementById("gen-code").addEventListener("click", async () => {
+      const code = randomMeetingCode();
+      settingFields.meeting_code.value = code;
+      try {
+        await api("PUT", "/api/settings", { meeting_code: code });
+        setStatus("Згенеровано: " + code, "ok");
+      } catch (e) { setStatus(e.message, "err"); }
+    });
 
     // ─── учасники ──────────────────────────────────────────────────────
     function slotTemplate(p) {
       const skipped = p.skipped ? " skipped" : "";
       const skipTag = p.skipped ? `<span class="skip-tag">пропускаємо</span>` : "";
+      const userTag = p.user_added ? `<span class="user-tag">додано вручну</span>` : "";
+      const disabledAttr = p.skipped ? "disabled" : "";
       return `
         <div class="slot${skipped}" data-id="${p.device_id}">
-          ${skipTag}
+          ${skipTag}${userTag}
           <div class="field">
             <label>Ім'я</label>
-            <input class="name-input" type="text" ${p.skipped ? "disabled" : ""}>
+            <input class="name-input" type="text" ${disabledAttr}>
           </div>
-          <div class="original">оригінал: ${escapeHtml(p.original_name)}</div>
           <div class="preview">
             ${p.has_avatar ? `<img src="/api/avatar/${encodeURIComponent(p.device_id)}?t=${Date.now()}">` : ""}
           </div>
           <div class="row">
             <label class="file-btn">
               ${p.has_avatar ? "Замінити" : "Завантажити фото"}
-              <input type="file" accept="image/*" ${p.skipped ? "disabled" : ""}>
+              <input type="file" accept="image/*" ${disabledAttr}>
             </label>
             <button type="button" class="clear-btn" ${p.has_avatar ? "" : "hidden"}>×</button>
           </div>
+          <div class="row">
+            <button type="button" class="gen-btn" ${disabledAttr} title="Згенерувати AI-аватарку за поточним фото + promt.md">✨ Згенерувати</button>
+            ${p.user_added ? `<button type="button" class="del-btn" title="Видалити учасника">🗑</button>` : ""}
+          </div>
+          <div class="gen-status"></div>
         </div>
       `;
     }
@@ -270,6 +520,8 @@
       const clearBtn = slot.querySelector(".clear-btn");
       const preview  = slot.querySelector(".preview");
       const fileBtn  = slot.querySelector(".file-btn");
+      const genBtn   = slot.querySelector(".gen-btn");
+      const delBtn   = slot.querySelector(".del-btn");
 
       nameInput.value = p.custom_name || "";
       nameInput.placeholder = p.original_name || "";
@@ -307,6 +559,36 @@
           setStatus("Прибрано", "ok");
         } catch (e) { setStatus(e.message, "err"); }
       });
+
+      genBtn?.addEventListener("click", async () => {
+        if (genBtn.disabled) return;
+        genBtn.disabled = true;
+        const statusLine = slot.querySelector(".gen-status");
+        statusLine.className = "gen-status";
+        statusLine.textContent = "Стартую…";
+        slot.classList.add("busy");
+        try {
+          const r = await api("POST", "/api/generate", {
+            participant_id: p.device_id,
+          });
+          statusLine.textContent = `Генерація #${r.id}…`;
+          ensurePolling();
+        } catch (e) {
+          statusLine.className = "gen-status err";
+          statusLine.textContent = e.message;
+          slot.classList.remove("busy");
+          genBtn.disabled = false;
+        }
+      });
+
+      delBtn?.addEventListener("click", async () => {
+        if (!confirm(`Видалити «${nameInput.value || p.original_name}»?`)) return;
+        try {
+          await api("DELETE", `/api/participants/${encodeURIComponent(p.device_id)}?hard=1`);
+          slot.remove();
+          setStatus("Видалено", "ok");
+        } catch (e) { setStatus(e.message, "err"); }
+      });
     }
 
     function cssEsc(s) {
@@ -328,8 +610,253 @@
       window.location.href = "/api/render?download=1";
     });
 
+    // ─── AI-панель ─────────────────────────────────────────────────────
+    const keyInput = document.getElementById("f-key");
+    const modelSel = document.getElementById("f-model");
+    const provSel  = document.getElementById("f-provider");
+    const tierSel  = document.getElementById("f-tier");
+    const balanceEl = document.getElementById("f-balance");
+    const refreshBtn = document.getElementById("refresh-balance");
+    const promptEl = document.getElementById("f-prompt");
+
+    async function loadAiSettings(s) {
+      // s = відповідь /api/settings
+      if (s.gen_model && [...modelSel.options].some(o => o.value === s.gen_model)) {
+        modelSel.value = s.gen_model;
+      }
+      if (s.gen_provider) provSel.value = s.gen_provider;
+      if (s.gen_tier) tierSel.value = s.gen_tier;
+      // Якщо ключ уже встановлено (з .env або раніше з UI) — не дозволяємо
+      // браузерному autofill переписати його випадковими байтами.
+      if (s.openrouter_api_key_set) {
+        keyInput.value = "";
+        keyInput.placeholder = "•••••• (з .env або БД)";
+        keyInput.readOnly = true;
+        keyInput.style.opacity = ".6";
+        keyInput.title = "Видали .env і перезапусти сервер, щоб ввести інший ключ";
+      } else {
+        keyInput.placeholder = "sk-or-...";
+        keyInput.readOnly = false;
+        keyInput.style.opacity = "";
+      }
+    }
+
+    async function saveAi(key, value) {
+      try {
+        await api("PUT", "/api/settings", { [key]: value });
+        setStatus("Збережено", "ok");
+      } catch (e) { setStatus(e.message, "err"); }
+    }
+    keyInput.addEventListener("change", () => {
+      // Захист: не зберігаємо порожнє і явно не схоже-на-ключ значення.
+      const v = keyInput.value.trim();
+      if (!v) return;
+      if (!v.startsWith("sk-or-")) {
+        setStatus("Ключ має починатись з sk-or-…", "err");
+        return;
+      }
+      saveAi("openrouter_api_key", v);
+      keyInput.value = "";
+      keyInput.placeholder = "•••••• (збережено)";
+      keyInput.readOnly = true;
+    });
+    modelSel.addEventListener("change",  () => saveAi("gen_model", modelSel.value));
+    provSel.addEventListener("change",   () => saveAi("gen_provider", provSel.value));
+    tierSel.addEventListener("change",   () => saveAi("gen_tier", tierSel.value));
+
+    async function refreshBalance() {
+      balanceEl.textContent = "…";
+      try {
+        const d = await api("GET", "/api/credits");
+        const data = d.data || d;
+        const total = Number(data.total_credits ?? 0);
+        const used  = Number(data.total_usage ?? 0);
+        const left  = (total - used);
+        balanceEl.textContent = `$${left.toFixed(4)} (з ${total.toFixed(2)})`;
+      } catch (e) {
+        balanceEl.textContent = "—";
+        setStatus("Баланс: " + e.message, "err");
+      }
+    }
+    refreshBtn.addEventListener("click", refreshBalance);
+
+    // ─── промт ─────────────────────────────────────────────────────────
+    async function loadPrompt() {
+      const r = await api("GET", "/api/prompt");
+      promptEl.value = r.prompt || "";
+    }
+    promptEl.addEventListener("change", async () => {
+      try {
+        await api("PUT", "/api/prompt", { prompt: promptEl.value });
+        setStatus("Промт збережено у promt.md", "ok");
+      } catch (e) { setStatus(e.message, "err"); }
+    });
+
+    // ─── додати учасника ───────────────────────────────────────────────
+    document.getElementById("add-participant").addEventListener("click", async () => {
+      const name = prompt("Імʼя нового учасника:");
+      if (!name) return;
+      try {
+        await api("POST", "/api/participants", { custom_name: name.trim() });
+        await loadParticipants();
+        setStatus("Додано", "ok");
+      } catch (e) { setStatus(e.message, "err"); }
+    });
+
+    // ─── черга генерацій + опитування ──────────────────────────────────
+    const queue = document.getElementById("queue");
+    const queueHeader = document.getElementById("queue-header");
+    let pollTimer = null;
+
+    function ensurePolling() {
+      if (pollTimer) return;
+      pollTimer = setInterval(pollGenerations, 2000);
+      pollGenerations();
+    }
+    function stopPolling() {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    }
+
+    async function pollGenerations() {
+      let list;
+      try { list = await api("GET", "/api/generations"); }
+      catch (e) { return; }
+      // оновити статуси на картках учасників
+      for (const slot of grid.querySelectorAll(".slot")) {
+        const pid = slot.getAttribute("data-id");
+        const mine = list.filter(g => g.participant_id === pid);
+        const pending = mine.find(g => g.status === "pending");
+        const err = mine.find(g => g.status === "error");
+        const statusLine = slot.querySelector(".gen-status");
+        const gen = slot.querySelector(".gen-btn");
+        if (!statusLine) continue;
+        if (pending) {
+          statusLine.className = "gen-status";
+          statusLine.textContent = `Генерація #${pending.id}…`;
+          slot.classList.add("busy");
+          if (gen) gen.disabled = true;
+        } else if (err) {
+          statusLine.className = "gen-status err";
+          statusLine.textContent = `Помилка: ${err.error || "невідома"}`;
+          slot.classList.remove("busy");
+          if (gen) gen.disabled = false;
+        } else {
+          if (!statusLine.textContent.startsWith("Помилка")) statusLine.textContent = "";
+          slot.classList.remove("busy");
+          if (gen) gen.disabled = false;
+        }
+      }
+      // намалювати чергу done + error
+      const reviewable = list.filter(g => g.status === "done" || g.status === "error");
+      queue.innerHTML = reviewable.map(queueCard).join("");
+      queueHeader.hidden = reviewable.length === 0;
+      for (const g of reviewable) wireQueueCard(g);
+      // якщо нічого pending → зупиняємо поллінг
+      if (!list.some(g => g.status === "pending")) stopPolling();
+    }
+
+    function queueCard(g) {
+      const meta = [
+        g.model,
+        g.provider,
+        g.service_tier,
+        g.cost_usd != null ? `$${Number(g.cost_usd).toFixed(5)}` : "",
+      ].filter(Boolean).join(" · ");
+      const img = g.has_image
+        ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">`
+        : "";
+      const isErr = g.status === "error";
+      return `
+        <div class="slot" data-gid="${g.id}" data-pid="${escapeHtml(g.participant_id || "")}">
+          ${isErr ? `<span class="skip-tag">помилка</span>` : `<span class="user-tag">готово</span>`}
+          <div class="preview">${img}</div>
+          <div class="original">${escapeHtml(isErr ? (g.error || "") : meta)}</div>
+          <div class="row">
+            ${isErr ? "" : `<button type="button" class="gen-btn approve-btn">✓ Прийняти</button>`}
+            <button type="button" class="del-btn reject-btn">🗑 Видалити</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function wireQueueCard(g) {
+      const card = queue.querySelector(`.slot[data-gid="${g.id}"]`);
+      if (!card) return;
+      card.querySelector(".approve-btn")?.addEventListener("click", async () => {
+        try {
+          await api("POST", `/api/generations/${g.id}/approve`);
+          await loadParticipants();
+          await pollGenerations();
+          setStatus("Прийнято як аватар", "ok");
+        } catch (e) { setStatus(e.message, "err"); }
+      });
+      card.querySelector(".reject-btn")?.addEventListener("click", async () => {
+        try {
+          await api("DELETE", `/api/generations/${g.id}`);
+          await pollGenerations();
+        } catch (e) { setStatus(e.message, "err"); }
+      });
+      // клік по прев'ю — відкриваємо модалку у великому розмірі
+      card.querySelector(".preview")?.addEventListener("click", () => openModal(g));
+    }
+
+    // ─── модалка ───────────────────────────────────────────────────────
+    const modalBg = document.getElementById("modal-bg");
+    const modalPreview = document.getElementById("modal-preview");
+    const modalMeta = document.getElementById("modal-meta");
+    let modalGen = null;
+
+    function openModal(g) {
+      modalGen = g;
+      modalPreview.innerHTML = g.has_image
+        ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">`
+        : `<div style="padding:20px;color:#9aa0a6">Зображення немає</div>`;
+      modalMeta.innerHTML = [
+        `<span>модель: ${escapeHtml(g.model)}</span>`,
+        `<span>провайдер: ${escapeHtml(g.provider)}</span>`,
+        `<span>тариф: ${escapeHtml(g.service_tier)}</span>`,
+        g.cost_usd != null ? `<span>$${Number(g.cost_usd).toFixed(5)}</span>` : "",
+        g.prompt_tokens ? `<span>tokens in: ${g.prompt_tokens}</span>` : "",
+        g.output_tokens ? `<span>tokens out: ${g.output_tokens}</span>` : "",
+      ].filter(Boolean).join("");
+      modalBg.classList.add("show");
+    }
+    function closeModal() {
+      modalBg.classList.remove("show");
+      modalGen = null;
+    }
+    document.getElementById("modal-close").addEventListener("click", closeModal);
+    modalBg.addEventListener("click", e => { if (e.target === modalBg) closeModal(); });
+    document.getElementById("modal-approve").addEventListener("click", async () => {
+      if (!modalGen) return;
+      try {
+        await api("POST", `/api/generations/${modalGen.id}/approve`);
+        closeModal();
+        await loadParticipants();
+        await pollGenerations();
+        setStatus("Прийнято як аватар", "ok");
+      } catch (e) { setStatus(e.message, "err"); }
+    });
+    document.getElementById("modal-reject").addEventListener("click", async () => {
+      if (!modalGen) return;
+      try {
+        await api("DELETE", `/api/generations/${modalGen.id}`);
+        closeModal();
+        await pollGenerations();
+      } catch (e) { setStatus(e.message, "err"); }
+    });
+
     // ─── init ─────────────────────────────────────────────────────────
-    Promise.all([loadSettings(), loadParticipants()]).catch(e => setStatus(e.message, "err"));
+    (async () => {
+      try {
+        const s = await api("GET", "/api/settings");
+        await loadSettings(s);
+        await loadAiSettings(s);
+        await loadParticipants();
+        await loadPrompt();
+        await pollGenerations();
+      } catch (e) { setStatus(e.message, "err"); }
+    })();
   </script>
 </body>
 </html>

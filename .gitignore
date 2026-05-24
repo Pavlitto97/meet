@@ -5,3 +5,8 @@ data.db-wal
 __pycache__/
 *.pyc
 .DS_Store
+.env
+.playwright-mcp/
+gen-approve-card.png
+api-render-*.png
+render-with-sanya-avatar.png
