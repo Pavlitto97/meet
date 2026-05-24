@@ -65,8 +65,13 @@ def db():
 
 
 DEFAULT_SETTINGS = {
-    "time":               "10:34",                  # number part у footer
-    "period":             "PM",                      # AM/PM
+    # Час «початку» і «кінця» зустрічі — підставляються у footer Meet HTML.
+    # Зустріч у Meet HTML має один таймер, ми малюємо ДВА рендери: один для
+    # моменту on-start, інший для on-end (з різними аватарками, якщо є split).
+    "start_time":         "10:34",
+    "start_period":       "PM",
+    "end_time":           "11:15",
+    "end_period":         "PM",
     "meeting_code":       "yrt-kczi-csw",            # хеш зустрічі
     "openrouter_api_key": "",                        # порожньо = не задано
     "gen_model":          DEFAULT_GEN_MODEL,
@@ -95,10 +100,14 @@ def init_db():
                 updated_at    TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Лагідна міграція — якщо стара БД без user_added, додаємо колонку.
+        # Лагідна міграція — якщо стара БД без user_added/avatar_end, додаємо.
         cols = {r[1] for r in con.execute("PRAGMA table_info(participants)")}
         if "user_added" not in cols:
             con.execute("ALTER TABLE participants ADD COLUMN user_added INTEGER NOT NULL DEFAULT 0")
+        if "avatar_end" not in cols:
+            con.execute("ALTER TABLE participants ADD COLUMN avatar_end BLOB")
+        if "avatar_end_mime" not in cols:
+            con.execute("ALTER TABLE participants ADD COLUMN avatar_end_mime TEXT")
         con.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
@@ -147,6 +156,22 @@ def init_db():
                 "INSERT INTO settings(key, value) VALUES('openrouter_api_key', ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (env_key,),
+            )
+        # Лагідна міграція стрих ключів `time`/`period` → `start_time`/`start_period`.
+        # Якщо нові ще пусті, а старі непусті — копіюємо. Потім старі лишаємо
+        # (нікому не заважають), але /api/settings PUT їх більше не приймає.
+        rows = {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM settings")}
+        if rows.get("time") and not rows.get("start_time"):
+            con.execute(
+                "INSERT INTO settings(key, value) VALUES('start_time', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (rows["time"],),
+            )
+        if rows.get("period") and not rows.get("start_period"):
+            con.execute(
+                "INSERT INTO settings(key, value) VALUES('start_period', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (rows["period"],),
             )
 
 
@@ -376,14 +401,21 @@ EMOJI_CODEPOINTS = {
 
 # ─── Рендер Meet HTML ──────────────────────────────────────────────────────
 
-def render_meet() -> str:
+def render_meet(which: str = "start") -> str:
+    """Малює Meet HTML. `which` обирає, яку «версію» рендеру повертати:
+    - "start" (default): start_time / start_period, поле avatar
+    - "end":             end_time   / end_period,   поле avatar_end (fallback на avatar)
+    """
+    if which not in ("start", "end"):
+        which = "start"
     html = MEET_HTML.read_text(encoding="utf-8")
     occ = [(m.start(), m.end(), m.group(1))
            for m in re.finditer(r'data-participant-id="([^"]+)"', html)]
 
     with db() as con:
         rows = {r["device_id"]: r for r in con.execute(
-            "SELECT device_id, original_name, custom_name, avatar, avatar_mime FROM participants"
+            "SELECT device_id, original_name, custom_name, avatar, avatar_mime, "
+            "avatar_end, avatar_end_mime FROM participants"
         )}
 
     img_re = re.compile(r'<img\b[^>]*?\ssrc="([^"]*)"')
@@ -396,9 +428,13 @@ def render_meet() -> str:
         bound = occ[i + 1][0] if i + 1 < len(occ) else len(html)
         tile = html[pos_end:bound]
 
-        # Аватарка — замінити src у всіх <img>
-        if row["avatar"]:
-            data_url = f"data:{row['avatar_mime']};base64,{b64encode(row['avatar']).decode()}"
+        # Аватарка — обираємо за which, з фолбеком на avatar якщо end ще не задано.
+        if which == "end" and row["avatar_end"]:
+            blob, mime = row["avatar_end"], row["avatar_end_mime"]
+        else:
+            blob, mime = row["avatar"], row["avatar_mime"]
+        if blob:
+            data_url = f"data:{mime};base64,{b64encode(blob).decode()}"
             for m in img_re.finditer(tile):
                 val_start = pos_end + m.end() - len(m.group(1)) - 1
                 val_end = val_start + len(m.group(1))
@@ -429,15 +465,18 @@ def render_meet() -> str:
     new_code = (s.get("meeting_code") or ORIGINAL_MEETING_CODE).strip()
     if new_code and new_code != ORIGINAL_MEETING_CODE:
         html = html.replace(ORIGINAL_MEETING_CODE, new_code)
-    # Час — точкові заміни всередині відомих span-ів
-    new_time = (s.get("time") or ORIGINAL_TIME).strip()
+    # Час — точкові заміни всередині відомих span-ів. Беремо start_/end_
+    # залежно від which.
+    time_key = "end_time" if which == "end" else "start_time"
+    period_key = "end_period" if which == "end" else "start_period"
+    new_time = (s.get(time_key) or ORIGINAL_TIME).strip()
     if new_time and new_time != ORIGINAL_TIME:
         html = re.sub(
             r'(<span jsname="W5i7Bf">)' + re.escape(ORIGINAL_TIME) + r'(</span>)',
             lambda m: m.group(1) + new_time + m.group(2),
             html, count=1,
         )
-    new_period = (s.get("period") or ORIGINAL_PERIOD).strip()
+    new_period = (s.get(period_key) or ORIGINAL_PERIOD).strip()
     if new_period and new_period != ORIGINAL_PERIOD:
         html = re.sub(
             r'(<span jsname="d1rraf"[^>]*>)' + re.escape(ORIGINAL_PERIOD) + r'(</span>)',
@@ -467,7 +506,27 @@ def render_meet() -> str:
     # резолвились би відносно /api/ → 404 на шрифти/іконки. <base href="/">
     # змушує браузер брати їх від кореня — той самий ефект, що при сирому
     # index.html, але без переписування атрибутів.
-    html = html.replace("<head>", '<head><base href="/">', 1)
+    #
+    # Override-стилі: Meet рендерить аватарку як маленьке коло у центрі плитки
+    # (це його placeholder для «камера вимкнена»). Нам треба видавати фото за
+    # «увімкнену камеру» — розтягнути img на весь розмір плитки.
+    head_inject = (
+        '<base href="/">'
+        '<style>'
+        # Override застосовуємо ЛИШЕ для плиток з кастомним data:base64 фото.
+        # Для учасників без аватара лишаємо дефолтну поведінку Meet
+        # (m0DVAf сховано, SOQwsf — кругленький силует-placeholder).
+        '.oZRSLe:has(img.m0DVAf[src^="data:"]){position:relative!important;}'
+        '.oZRSLe img.m0DVAf[src^="data:"]{'
+        'position:absolute!important;inset:0!important;'
+        'width:100%!important;height:100%!important;'
+        'object-fit:cover!important;border-radius:inherit!important;'
+        'display:block!important;clip-path:none!important;z-index:5!important;}'
+        # SOQwsf-кружечок ховаємо лише коли поверх нього лягло наше фото.
+        '.oZRSLe:has(img.m0DVAf[src^="data:"]) img.SOQwsf{display:none!important;}'
+        '</style>'
+    )
+    html = html.replace("<head>", "<head>" + head_inject, 1)
     return html
 
 
@@ -511,31 +570,35 @@ class H(BaseHTTPRequestHandler):
             with db() as con:
                 rows = list(con.execute(
                     "SELECT device_id, original_name, custom_name, "
-                    "avatar IS NOT NULL AS has_avatar, avatar_mime, skipped, "
-                    "user_added, position "
+                    "avatar IS NOT NULL AS has_avatar, avatar_mime, "
+                    "avatar_end IS NOT NULL AS has_avatar_end, avatar_end_mime, "
+                    "skipped, user_added, position "
                     "FROM participants ORDER BY position"
                 ))
             return self._json(200, [dict(r) for r in rows])
 
         if path.startswith("/api/avatar/"):
             did = unquote(path[len("/api/avatar/"):])
+            which = (query.get("which") or ["start"])[0]
+            blob_col = "avatar_end" if which == "end" else "avatar"
+            mime_col = "avatar_end_mime" if which == "end" else "avatar_mime"
             with db() as con:
                 row = con.execute(
-                    "SELECT avatar, avatar_mime FROM participants WHERE device_id = ?",
+                    f"SELECT {blob_col} AS blob, {mime_col} AS mime FROM participants WHERE device_id = ?",
                     (did,),
                 ).fetchone()
-            if not row or not row["avatar"]:
+            if not row or not row["blob"]:
                 return self._text(404, "text/plain", b"no avatar")
-            return self._text(200, row["avatar_mime"], row["avatar"],
+            return self._text(200, row["mime"], row["blob"],
                               {"Cache-Control": "no-store"})
 
         if path == "/api/render":
-            html = render_meet().encode("utf-8")
+            which = (query.get("which") or ["start"])[0]
+            html = render_meet(which).encode("utf-8")
             headers = {}
             if query.get("download"):
-                headers["Content-Disposition"] = (
-                    'attachment; filename="index.html"'
-                )
+                fname = f'meet-{which}.html'
+                headers["Content-Disposition"] = f'attachment; filename="{fname}"'
             return self._text(200, "text/html; charset=utf-8", html, headers)
 
         if path == "/api/prompt":
@@ -627,18 +690,23 @@ class H(BaseHTTPRequestHandler):
             fields = {}
             if "custom_name" in body:
                 fields["custom_name"] = body["custom_name"] or None
-            if "avatar_data_url" in body:
-                v = body["avatar_data_url"]
+            for body_key, blob_col, mime_col in (
+                ("avatar_data_url",     "avatar",     "avatar_mime"),
+                ("avatar_end_data_url", "avatar_end", "avatar_end_mime"),
+            ):
+                if body_key not in body:
+                    continue
+                v = body[body_key]
                 if v is None:
-                    fields["avatar"] = None
-                    fields["avatar_mime"] = None
+                    fields[blob_col] = None
+                    fields[mime_col] = None
                 else:
                     try:
                         mime, blob = _parse_data_url(v)
                     except ValueError:
-                        return self._json(400, {"error": "bad data URL"})
-                    fields["avatar_mime"] = mime
-                    fields["avatar"] = blob
+                        return self._json(400, {"error": f"bad data URL for {body_key}"})
+                    fields[mime_col] = mime
+                    fields[blob_col] = blob
             if not fields:
                 return self._json(400, {"error": "nothing to update"})
             sets = ", ".join(f"{k} = ?" for k in fields)
@@ -755,8 +823,8 @@ class H(BaseHTTPRequestHandler):
                 else:
                     con.execute(
                         "UPDATE participants SET custom_name=NULL, avatar=NULL, "
-                        "avatar_mime=NULL, updated_at=CURRENT_TIMESTAMP "
-                        "WHERE device_id = ?",
+                        "avatar_mime=NULL, avatar_end=NULL, avatar_end_mime=NULL, "
+                        "updated_at=CURRENT_TIMESTAMP WHERE device_id = ?",
                         (did,),
                     )
             return self._json(200, {"ok": True})

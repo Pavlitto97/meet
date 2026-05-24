@@ -132,6 +132,10 @@
       object-fit: cover;
       display: block;
     }
+    .avatar-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .avatar-pair .preview { aspect-ratio: 1 / 1; }
+    .avatar-side { display: flex; flex-direction: column; gap: 4px; }
+    .avatar-label { font-size: 10px; color: #9aa0a6; text-align: center; text-transform: uppercase; letter-spacing: .5px; }
     .slot input[type=file] { display: none; }
     .row { display: flex; gap: 6px; align-items: center; }
     .row .file-btn,
@@ -284,16 +288,22 @@
   </p>
 
   <div class="toolbar">
-    <button id="preview">Переглянути</button>
-    <button id="save">Зберегти HTML</button>
+    <button id="preview-start">▶ Перегляд (початок)</button>
+    <button id="preview-end">⏵⏵ Перегляд (кінець)</button>
+    <button id="save-start" class="secondary">⤓ HTML початок</button>
+    <button id="save-end" class="secondary">⤓ HTML кінець</button>
     <span id="status" class="status"></span>
   </div>
 
   <h2>Параметри зустрічі</h2>
   <div class="meeting-bar">
     <div class="field">
-      <label for="f-time">Час</label>
-      <input id="f-time" placeholder="10:34 PM" readonly>
+      <label for="f-start-time">Час початку</label>
+      <input id="f-start-time" placeholder="10:34 PM" readonly>
+    </div>
+    <div class="field">
+      <label for="f-end-time">Час кінця</label>
+      <input id="f-end-time" placeholder="11:15 PM" readonly>
     </div>
     <div class="field">
       <label for="f-code">Код зустрічі</label>
@@ -369,9 +379,11 @@
   <script>
     const statusEl = document.getElementById("status");
     const grid = document.getElementById("grid");
-    const previewBtn = document.getElementById("preview");
-    const saveBtn = document.getElementById("save");
-    let previewWin = null;
+    const previewStartBtn = document.getElementById("preview-start");
+    const previewEndBtn = document.getElementById("preview-end");
+    const saveStartBtn = document.getElementById("save-start");
+    const saveEndBtn = document.getElementById("save-end");
+    let previewWins = { start: null, end: null };
     let statusTimer = null;
 
     function setStatus(msg, cls = "") {
@@ -406,11 +418,11 @@
 
     // ─── налаштування зустрічі ─────────────────────────────────────────
     const codeInput = document.getElementById("f-code");
-    const timeInput = document.getElementById("f-time");
+    const startInput = document.getElementById("f-start-time");
+    const endInput = document.getElementById("f-end-time");
 
     // flatpickr — пікер часу у 12-годинному форматі, AM/PM ввімкнено.
     // Час і період зберігаємо в settings окремо (так зберігає сервер).
-    let fp = null;
 
     function parseTimeString(str) {
       // "10:34 PM" → { time: "10:34", period: "PM" }
@@ -419,27 +431,33 @@
       return { time: m[1], period: m[2].toUpperCase() };
     }
 
-    async function loadSettings(preloaded) {
-      const s = preloaded || await api("GET", "/api/settings");
-      codeInput.value = s.meeting_code || "";
-      const display = `${s.time || "10:34"} ${s.period || "PM"}`;
-      timeInput.value = display;
-      fp = flatpickr(timeInput, {
+    function wireTimePicker(inputEl, timeKey, periodKey, defaultDisplay) {
+      inputEl.value = defaultDisplay;
+      flatpickr(inputEl, {
         enableTime: true,
         noCalendar: true,
         dateFormat: "h:i K",     // 12-год + AM/PM
         time_24hr: false,
-        defaultDate: display,
+        defaultDate: defaultDisplay,
         allowInput: false,
         onChange: async (_, dateStr) => {
           const parsed = parseTimeString(dateStr);
           if (!parsed) return;
           try {
-            await api("PUT", "/api/settings", parsed);
+            await api("PUT", "/api/settings", { [timeKey]: parsed.time, [periodKey]: parsed.period });
             setStatus("Збережено", "ok");
           } catch (e) { setStatus(e.message, "err"); }
         },
       });
+    }
+
+    async function loadSettings(preloaded) {
+      const s = preloaded || await api("GET", "/api/settings");
+      codeInput.value = s.meeting_code || "";
+      wireTimePicker(startInput, "start_time", "start_period",
+                     `${s.start_time || "10:34"} ${s.start_period || "PM"}`);
+      wireTimePicker(endInput, "end_time", "end_period",
+                     `${s.end_time || "11:15"} ${s.end_period || "PM"}`);
     }
 
     codeInput.addEventListener("change", async () => {
@@ -476,6 +494,11 @@
       const skipTag = p.skipped ? `<span class="skip-tag">пропускаємо</span>` : "";
       const userTag = p.user_added ? `<span class="user-tag">додано вручну</span>` : "";
       const disabledAttr = p.skipped ? "disabled" : "";
+      const pidEnc = encodeURIComponent(p.device_id);
+      const startImg = p.has_avatar ? `<img src="/api/avatar/${pidEnc}?which=start&t=${Date.now()}">` : "";
+      const endImg = p.has_avatar_end
+        ? `<img src="/api/avatar/${pidEnc}?which=end&t=${Date.now()}">`
+        : (p.has_avatar ? `<img src="/api/avatar/${pidEnc}?which=start&t=${Date.now()}" style="opacity:.4">` : "");
       return `
         <div class="slot${skipped}" data-id="${p.device_id}">
           ${skipTag}${userTag}
@@ -483,18 +506,25 @@
             <label>Ім'я</label>
             <input class="name-input" type="text" ${disabledAttr}>
           </div>
-          <div class="preview">
-            ${p.has_avatar ? `<img src="/api/avatar/${encodeURIComponent(p.device_id)}?t=${Date.now()}">` : ""}
+          <div class="avatar-pair">
+            <div class="avatar-side">
+              <div class="avatar-label">початок</div>
+              <div class="preview preview-start">${startImg}</div>
+            </div>
+            <div class="avatar-side">
+              <div class="avatar-label">кінець ${p.has_avatar_end ? "" : "(=початок)"}</div>
+              <div class="preview preview-end">${endImg}</div>
+            </div>
           </div>
           <div class="row">
             <label class="file-btn">
-              ${p.has_avatar ? "Замінити" : "Завантажити фото"}
+              ${p.has_avatar ? "Замінити початок" : "Завантажити фото"}
               <input type="file" accept="image/*" ${disabledAttr}>
             </label>
-            <button type="button" class="clear-btn" ${p.has_avatar ? "" : "hidden"}>×</button>
+            <button type="button" class="clear-btn" ${p.has_avatar || p.has_avatar_end ? "" : "hidden"} title="Прибрати обидва фото">×</button>
           </div>
           <div class="row">
-            <button type="button" class="gen-btn" ${disabledAttr} title="Згенерувати AI-аватарку за поточним фото + promt.md">✨ Згенерувати</button>
+            <button type="button" class="gen-btn" ${disabledAttr} title="Згенерувати колаж і розділити на початок/кінець">✨ Згенерувати</button>
             ${p.user_added ? `<button type="button" class="del-btn" title="Видалити учасника">🗑</button>` : ""}
           </div>
           <div class="gen-status"></div>
@@ -518,7 +548,8 @@
       const nameInput = slot.querySelector(".name-input");
       const fileInput = slot.querySelector("input[type=file]");
       const clearBtn = slot.querySelector(".clear-btn");
-      const preview  = slot.querySelector(".preview");
+      const previewStart = slot.querySelector(".preview-start");
+      const previewEnd   = slot.querySelector(".preview-end");
       const fileBtn  = slot.querySelector(".file-btn");
       const genBtn   = slot.querySelector(".gen-btn");
       const delBtn   = slot.querySelector(".del-btn");
@@ -541,9 +572,14 @@
         try {
           await api("PUT", `/api/participants/${encodeURIComponent(p.device_id)}`,
                     { avatar_data_url: dataUrl });
-          preview.innerHTML = `<img src="/api/avatar/${encodeURIComponent(p.device_id)}?t=${Date.now()}">`;
+          const t = Date.now();
+          previewStart.innerHTML = `<img src="/api/avatar/${encodeURIComponent(p.device_id)}?which=start&t=${t}">`;
+          // якщо avatar_end ще не задано — показуємо start у правому з прозорістю
+          if (!p.has_avatar_end) {
+            previewEnd.innerHTML = `<img src="/api/avatar/${encodeURIComponent(p.device_id)}?which=start&t=${t}" style="opacity:.4">`;
+          }
           clearBtn.hidden = false;
-          fileBtn.firstChild.textContent = " Замінити ";
+          fileBtn.firstChild.textContent = " Замінити початок ";
           setStatus("Збережено", "ok");
         } catch (e2) { setStatus(e2.message, "err"); }
         fileInput.value = "";
@@ -552,8 +588,9 @@
       clearBtn.addEventListener("click", async () => {
         try {
           await api("PUT", `/api/participants/${encodeURIComponent(p.device_id)}`,
-                    { avatar_data_url: null });
-          preview.innerHTML = "";
+                    { avatar_data_url: null, avatar_end_data_url: null });
+          previewStart.innerHTML = "";
+          previewEnd.innerHTML = "";
           clearBtn.hidden = true;
           fileBtn.firstChild.textContent = " Завантажити фото ";
           setStatus("Прибрано", "ok");
@@ -596,18 +633,23 @@
     }
 
     // ─── preview / save ────────────────────────────────────────────────
-    previewBtn.addEventListener("click", () => {
-      const url = `/api/render?t=${Date.now()}`;
-      if (!previewWin || previewWin.closed) {
-        previewWin = window.open(url, "meet-preview");
+    function openPreview(which) {
+      const url = `/api/render?which=${which}&t=${Date.now()}`;
+      const w = previewWins[which];
+      if (!w || w.closed) {
+        previewWins[which] = window.open(url, `meet-preview-${which}`);
       } else {
-        previewWin.location.replace(url);
-        previewWin.focus();
+        w.location.replace(url);
+        w.focus();
       }
+    }
+    previewStartBtn.addEventListener("click", () => openPreview("start"));
+    previewEndBtn.addEventListener("click", () => openPreview("end"));
+    saveStartBtn.addEventListener("click", () => {
+      window.location.href = "/api/render?which=start&download=1";
     });
-
-    saveBtn.addEventListener("click", () => {
-      window.location.href = "/api/render?download=1";
+    saveEndBtn.addEventListener("click", () => {
+      window.location.href = "/api/render?which=end&download=1";
     });
 
     // ─── AI-панель ─────────────────────────────────────────────────────
@@ -779,15 +821,64 @@
       `;
     }
 
+    // Розрізає колаж із 2 кадрів. Промт «paired images» від Gemini зазвичай
+    // дає два обличчя поруч (горизонтальний layout): 896×1152, 1344×768 тощо.
+    // Якщо зображення явно тонше за ширше (W/H > 1.3) — ділимо вертикальною
+    // лінією навпіл; якщо явно високе (H/W > 1.3) — горизонтальною. В іншому
+    // (square-ish) випадку дивимось на промт-замовлення: треба ДВІ голови
+    // поруч, отже вертикальний розріз навпіл — це наша ставка за замовченням.
+    async function splitCollage(imageUrl) {
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error("не вдалось завантажити згенероване зображення"));
+        img.src = imageUrl;
+      });
+      const W = img.naturalWidth, H = img.naturalHeight;
+      function crop(sx, sy, sw, sh) {
+        const c = document.createElement("canvas");
+        c.width = sw; c.height = sh;
+        c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+        return c.toDataURL("image/png");
+      }
+      const isTall = H / W > 1.3;
+      if (isTall) {
+        const halfH = Math.floor(H / 2);
+        return {
+          left:  crop(0, 0, W, halfH),
+          right: crop(0, halfH, W, H - halfH),
+          split: "vertical",
+        };
+      }
+      const halfW = Math.floor(W / 2);
+      return {
+        left:  crop(0, 0, halfW, H),
+        right: crop(halfW, 0, W - halfW, H),
+        split: "horizontal",
+      };
+    }
+
+    async function approveGeneration(g) {
+      if (!g.participant_id) throw new Error("Генерація не привʼязана до учасника");
+      const url = `/api/generation-image/${g.id}?t=${Date.now()}`;
+      const { left, right, split } = await splitCollage(url);
+      await api("PUT", `/api/participants/${encodeURIComponent(g.participant_id)}`,
+                { avatar_data_url: left, avatar_end_data_url: right });
+      await api("DELETE", `/api/generations/${g.id}`);
+      const msg = split === "vertical"
+        ? "Розрізано: верх→початок, низ→кінець"
+        : "Розрізано: ліве→початок, праве→кінець";
+      setStatus(msg, "ok");
+    }
+
     function wireQueueCard(g) {
       const card = queue.querySelector(`.slot[data-gid="${g.id}"]`);
       if (!card) return;
       card.querySelector(".approve-btn")?.addEventListener("click", async () => {
         try {
-          await api("POST", `/api/generations/${g.id}/approve`);
+          await approveGeneration(g);
           await loadParticipants();
           await pollGenerations();
-          setStatus("Прийнято як аватар", "ok");
         } catch (e) { setStatus(e.message, "err"); }
       });
       card.querySelector(".reject-btn")?.addEventListener("click", async () => {
@@ -830,11 +921,10 @@
     document.getElementById("modal-approve").addEventListener("click", async () => {
       if (!modalGen) return;
       try {
-        await api("POST", `/api/generations/${modalGen.id}/approve`);
+        await approveGeneration(modalGen);
         closeModal();
         await loadParticipants();
         await pollGenerations();
-        setStatus("Прийнято як аватар", "ok");
       } catch (e) { setStatus(e.message, "err"); }
     });
     document.getElementById("modal-reject").addEventListener("click", async () => {
