@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="assets/img/meet_logo/logo_meet_2026_color_1x_web_32dp.png">
+  <title>Meet — адмін-панель</title>
+  <link rel="stylesheet" href="assets/vendor/flatpickr/flatpickr.min.css">
+  <link rel="stylesheet" href="assets/vendor/flatpickr/dark.css">
+  <link rel="stylesheet" href="assets/css/app.css">
+  <script src="assets/vendor/flatpickr/flatpickr.min.js"></script>
+</head>
+<body>
+<div class="admin-shell">
+  <div class="admin-head">
+    <h1>⚙ Адмін-панель Meet</h1>
+    <span class="muted" id="subtitle">керування зустріччю, учасниками та генераціями</span>
+    <div class="links">
+      <a href="editor.html">← Редактор</a>
+      <a href="/api/render?which=start" target="_blank">Перегляд ▶</a>
+    </div>
+  </div>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="dashboard">Огляд</button>
+    <button class="tab" data-tab="participants">Учасники</button>
+    <button class="tab" data-tab="generations">Генерації</button>
+    <button class="tab" data-tab="settings">Налаштування</button>
+    <button class="tab" data-tab="prompt">Промт</button>
+    <button class="tab" data-tab="system">Система</button>
+  </nav>
+
+  <!-- ═══ ОГЛЯД ═══ -->
+  <section class="panel active" data-panel="dashboard">
+    <div class="toolbar">
+      <button id="dash-refresh" class="secondary">↻ Оновити</button>
+      <button id="dash-preview-start" class="secondary">▶ Перегляд (початок)</button>
+      <button id="dash-preview-end" class="secondary">⏵⏵ Перегляд (кінець)</button>
+      <button id="dash-dl-start" class="secondary">⤓ HTML початок</button>
+      <button id="dash-dl-end" class="secondary">⤓ HTML кінець</button>
+    </div>
+    <div class="stat-grid" id="stat-grid"></div>
+    <div class="card" style="margin-top:16px">
+      <h3>Вартість генерацій за моделями</h3>
+      <table class="data" id="cost-table"><thead><tr><th>Модель</th><th>К-сть</th><th>Сума, $</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- ═══ УЧАСНИКИ ═══ -->
+  <section class="panel" data-panel="participants">
+    <div class="toolbar">
+      <button id="p-add">+ Додати учасника</button>
+      <button id="p-refresh" class="secondary">↻ Оновити</button>
+      <span class="muted">Стрілки ↑↓ змінюють порядок плиток у рендері. «Пропуск» ховає учасника з редактора (placeholder-силует).</span>
+    </div>
+    <table class="data" id="p-table">
+      <thead>
+        <tr>
+          <th style="width:60px">№</th>
+          <th>Аватарки</th>
+          <th>Імʼя (custom)</th>
+          <th>Оригінал у HTML</th>
+          <th style="width:70px">Пропуск</th>
+          <th style="width:230px">Дії</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <input type="file" id="p-file" accept="image/*" hidden>
+  </section>
+
+  <!-- ═══ ГЕНЕРАЦІЇ ═══ -->
+  <section class="panel" data-panel="generations">
+    <div class="toolbar">
+      <button id="g-refresh" class="secondary">↻ Оновити</button>
+      <select id="g-filter-status" class="btn-sm" style="border-radius:16px;padding:8px 12px">
+        <option value="">усі статуси</option>
+        <option value="done">done</option>
+        <option value="pending">pending</option>
+        <option value="error">error</option>
+      </select>
+      <span class="toolbar-right"></span>
+      <button id="g-del-errors" class="danger btn-sm">🗑 Видалити всі помилки</button>
+      <button id="g-del-done" class="danger btn-sm">🗑 Видалити всі done</button>
+      <button id="g-del-all" class="danger btn-sm">🗑 Очистити чергу</button>
+    </div>
+    <div class="stat-grid" id="g-stats" style="margin-bottom:16px"></div>
+    <div class="gen-gallery" id="g-gallery"></div>
+    <p class="muted" id="g-empty" hidden>Генерацій немає. Запусти ✨ зі вкладки «Учасники».</p>
+  </section>
+
+  <!-- ═══ НАЛАШТУВАННЯ ═══ -->
+  <section class="panel" data-panel="settings">
+    <div class="card">
+      <h3>Параметри зустрічі</h3>
+      <div class="flex">
+        <div class="field"><label for="s-start">Час початку</label><input id="s-start" placeholder="10:34 PM" readonly></div>
+        <div class="field"><label for="s-end">Час кінця</label><input id="s-end" placeholder="11:15 PM" readonly></div>
+        <div class="field"><label for="s-code">Код зустрічі</label>
+          <div class="input-with-btn"><input id="s-code" placeholder="yrt-kczi-csw"><button type="button" class="icon-btn" id="s-gen-code" title="Випадковий код">🎲</button></div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>AI-генерація (OpenRouter)</h3>
+      <div class="flex">
+        <div class="field"><label for="s-key">API key</label><input id="s-key" type="password" placeholder="sk-or-..." autocomplete="off" spellcheck="false" data-1p-ignore></div>
+        <div class="field"><label for="s-model">Модель</label>
+          <select id="s-model">
+            <option value="google/gemini-2.5-flash-image">gemini-2.5-flash-image</option>
+            <option value="google/gemini-3.5-flash" disabled>gemini-3.5-flash (text-only)</option>
+          </select>
+        </div>
+        <div class="field"><label for="s-provider">Провайдер</label>
+          <select id="s-provider"><option value="google-ai-studio">google-ai-studio</option><option value="google-vertex">google-vertex / global</option></select>
+        </div>
+        <div class="field"><label for="s-tier">Тариф</label>
+          <select id="s-tier"><option value="flex">Flex · 0.5×</option><option value="default">Default · 1×</option><option value="priority">Priority · 1.8×</option></select>
+        </div>
+        <div class="field"><label>Баланс</label><div class="flex"><span class="value mono" id="s-balance">—</span><button type="button" class="iconbtn" id="s-balance-refresh">↻</button></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ ПРОМТ ═══ -->
+  <section class="panel" data-panel="prompt">
+    <div class="card">
+      <h3>Промт для генерації <span class="muted">(файл promt.md)</span></h3>
+      <div class="prompt-box"><textarea id="pr-text" spellcheck="false"></textarea></div>
+      <div class="toolbar" style="margin-top:12px">
+        <button id="pr-save">Зберегти промт</button>
+        <input id="pr-preset-name" placeholder="назва пресета" style="background:var(--surface-2);color:var(--text);border:1px solid transparent;padding:8px 10px;border-radius:6px;font-family:inherit">
+        <button id="pr-preset-save" class="secondary">💾 Зберегти як пресет</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Збережені пресети</h3>
+      <table class="data" id="pr-presets"><thead><tr><th>Назва</th><th>Оновлено</th><th style="width:180px">Дії</th></tr></thead><tbody></tbody></table>
+      <p class="muted" id="pr-presets-empty" hidden>Пресетів ще немає.</p>
+    </div>
+  </section>
+
+  <!-- ═══ СИСТЕМА ═══ -->
+  <section class="panel" data-panel="system">
+    <div class="card">
+      <h3>Система <button id="sys-refresh" class="iconbtn" style="float:right">↻</button></h3>
+      <div class="kv" id="sys-info"></div>
+    </div>
+    <div class="card">
+      <h3>База даних</h3>
+      <div class="kv" id="db-info"></div>
+    </div>
+    <div class="card">
+      <h3>Резервні копії та перенесення</h3>
+      <p class="desc">Експорт — повний знімок (учасники з аватарками, налаштування, промт, пресети) без секретів. Імпорт приймає такий самий JSON.</p>
+      <div class="toolbar">
+        <a id="exp-download" href="/api/admin/export?download=1"><button class="secondary">⤓ Експорт JSON</button></a>
+        <button id="db-backup" class="secondary">⤓ Бекап data.db</button>
+        <button id="imp-btn" class="secondary">⤒ Імпорт JSON</button>
+        <input type="file" id="imp-file" accept="application/json,.json" hidden>
+      </div>
+    </div>
+    <div class="card danger-zone">
+      <h3>⚠ Небезпечна зона</h3>
+      <p class="desc">Незворотні операції. Спочатку зроби бекап.</p>
+      <div class="toolbar">
+        <button id="db-vacuum" class="secondary">🧹 VACUUM (стиснути БД)</button>
+        <button id="idx-restore" class="danger">♻ Відновити index.html з .bak</button>
+        <button id="db-reset" class="danger">💣 Скинути базу до дефолтів</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Журнал активності <button id="act-refresh" class="iconbtn" style="float:right">↻</button></h3>
+      <div class="activity-log" id="activity-log"></div>
+    </div>
+  </section>
+</div>
+
+<!-- модалка перегляду генерації -->
+<div class="modal-bg" id="modal-bg">
+  <div class="modal">
+    <h3 id="modal-title">Перегляд генерації</h3>
+    <div class="gen-preview" id="modal-preview"></div>
+    <div class="gen-meta" id="modal-meta"></div>
+    <div class="modal-actions" id="modal-actions"></div>
+  </div>
+</div>
+
+<script src="assets/js/api.js"></script>
+<script src="assets/js/admin.js"></script>
+</body>
+</html>
