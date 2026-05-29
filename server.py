@@ -283,6 +283,10 @@ def call_openrouter_image(
         "model": model,
         "modalities": ["text", "image"],
         "messages": [{"role": "user", "content": content}],
+        # 16:9 → горизонтальний канвас під 2-кадровий side-by-side колаж.
+        # Знижує шанс, що модель додасть білий padding навколо вертикальної
+        # картинки (бачили це на дефолтному square-output).
+        "image_config": {"aspect_ratio": "16:9"},
         # Просимо повернути cost у usage.
         "usage": {"include": True},
     }
@@ -346,16 +350,36 @@ def _run_generation(gen_id: int):
         if not api_key:
             raise RuntimeError("OpenRouter API key не задано. Введи його у налаштуваннях.")
         input_url = _avatar_data_url(row["participant_id"]) if row["participant_id"] else None
-        resp = call_openrouter_image(
-            api_key,
-            model=row["model"],
-            provider=row["provider"],
-            service_tier=row["service_tier"],
-            prompt=row["prompt"],
-            input_image_data_url=input_url,
-        )
-        mime, blob = _extract_image_from_response(resp)
-        usage = resp.get("usage") or {}
+        # Gemini деколи відповідає 200 OK без image (модель «передумала», safety
+        # block, або просто промазала). Це транзієнтно — повторюємо до 3 разів
+        # перш ніж показати помилку користувачу.
+        max_attempts = 3
+        last_err: Exception | None = None
+        mime = blob = None
+        usage: dict = {}
+        for attempt in range(max_attempts):
+            try:
+                resp = call_openrouter_image(
+                    api_key,
+                    model=row["model"],
+                    provider=row["provider"],
+                    service_tier=row["service_tier"],
+                    prompt=row["prompt"],
+                    input_image_data_url=input_url,
+                )
+                mime, blob = _extract_image_from_response(resp)
+                usage = resp.get("usage") or {}
+                last_err = None
+                break
+            except RuntimeError as e:
+                last_err = e
+                # Ретраїмо лише empty-image випадки. HTTP-помилки (401/404/429)
+                # самі не виправляться — фейлимо одразу.
+                if "image_url" not in str(e):
+                    raise
+                sys.stderr.write(f"[gen #{gen_id}] empty image, retry {attempt+1}/{max_attempts}\n")
+        if last_err and blob is None:
+            raise last_err
         cost = usage.get("cost")
         ptok = usage.get("prompt_tokens")
         otok = usage.get("completion_tokens") or usage.get("output_tokens")
@@ -624,20 +648,27 @@ class H(BaseHTTPRequestHandler):
         if path == "/api/generations":
             participant = (query.get("participant_id") or [None])[0]
             status = (query.get("status") or [None])[0]
+            # JOIN з participants — щоб у UI показати ім'я в кожній варіант-картці.
             sql = (
-                "SELECT id, participant_id, prompt, model, provider, service_tier, "
-                "status, error, image IS NOT NULL AS has_image, image_mime, "
-                "cost_usd, prompt_tokens, output_tokens, created_at, finished_at "
-                "FROM generations WHERE 1=1"
+                "SELECT g.id, g.participant_id, g.prompt, g.model, g.provider, "
+                "g.service_tier, g.status, g.error, "
+                "g.image IS NOT NULL AS has_image, g.image_mime, "
+                "g.cost_usd, g.prompt_tokens, g.output_tokens, "
+                "g.created_at, g.finished_at, "
+                "COALESCE(p.custom_name, p.original_name) AS participant_name "
+                "FROM generations g "
+                "LEFT JOIN participants p ON p.device_id = g.participant_id "
+                "WHERE 1=1"
             )
             args: list = []
             if participant:
-                sql += " AND participant_id = ?"
+                sql += " AND g.participant_id = ?"
                 args.append(participant)
             if status:
-                sql += " AND status = ?"
+                sql += " AND g.status = ?"
                 args.append(status)
-            sql += " ORDER BY id DESC LIMIT 200"
+            # Групуємо варіанти одного учасника поряд, новіші — зверху.
+            sql += " ORDER BY g.participant_id, g.id DESC LIMIT 200"
             with db() as con:
                 rows = [dict(r) for r in con.execute(sql, args)]
             return self._json(200, rows)

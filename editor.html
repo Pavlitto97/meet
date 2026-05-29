@@ -169,13 +169,51 @@
       display: inline-block;
       width: fit-content;
     }
+    .queue-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: #e8eaed;
+    }
+    .variant-pill {
+      font-size: 10px;
+      color: #fdd663;
+      background: #3c2e10;
+      padding: 2px 6px;
+      border-radius: 4px;
+      letter-spacing: .3px;
+    }
     .slot.busy { outline: 2px solid #8ab4f8; }
     .slot .gen-status {
       font-size: 11px;
       color: #8ab4f8;
       min-height: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
     .slot .gen-status.err { color: #f28b82; }
+    .loader-bar {
+      height: 3px;
+      width: 100%;
+      background: #1f3a5a;
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+    .loader-bar::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      width: 40%;
+      background: linear-gradient(90deg, transparent, #8ab4f8, transparent);
+      animation: loaderSlide 1.4s ease-in-out infinite;
+    }
+    @keyframes loaderSlide {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
 
     .ai-panel {
       background: #2d2e30;
@@ -774,7 +812,9 @@
         if (!statusLine) continue;
         if (pending) {
           statusLine.className = "gen-status";
-          statusLine.textContent = `Генерація #${pending.id}…`;
+          statusLine.innerHTML =
+            `<span>Зображення в обробці… #${pending.id}</span>` +
+            `<div class="loader-bar"></div>`;
           slot.classList.add("busy");
           if (gen) gen.disabled = true;
         } else if (err) {
@@ -783,16 +823,30 @@
           slot.classList.remove("busy");
           if (gen) gen.disabled = false;
         } else {
-          if (!statusLine.textContent.startsWith("Помилка")) statusLine.textContent = "";
+          if (!(statusLine.textContent || "").startsWith("Помилка")) statusLine.innerHTML = "";
           slot.classList.remove("busy");
           if (gen) gen.disabled = false;
         }
       }
-      // намалювати чергу done + error
+      // намалювати чергу done + error. Лічимо номер варіанта в межах одного
+      // учасника, щоб у заголовку було «Саня · варіант 2/3».
       const reviewable = list.filter(g => g.status === "done" || g.status === "error");
-      queue.innerHTML = reviewable.map(queueCard).join("");
-      queueHeader.hidden = reviewable.length === 0;
-      for (const g of reviewable) wireQueueCard(g);
+      const grouped = new Map();
+      for (const g of reviewable) {
+        const key = g.participant_id || "_orphan";
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(g);
+      }
+      const enriched = [];
+      for (const arr of grouped.values()) {
+        // arr вже відсортовано сервером: ORDER BY participant_id, id DESC.
+        // Найновіший = index 0 → варіант 1.
+        const total = arr.length;
+        arr.forEach((g, i) => enriched.push({ ...g, _variantIdx: i + 1, _variantTotal: total }));
+      }
+      queue.innerHTML = enriched.map(queueCard).join("");
+      queueHeader.hidden = enriched.length === 0;
+      for (const g of enriched) wireQueueCard(g);
       // якщо нічого pending → зупиняємо поллінг
       if (!list.some(g => g.status === "pending")) stopPolling();
     }
@@ -808,13 +862,31 @@
         ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">`
         : "";
       const isErr = g.status === "error";
+      // Empty-image error від OpenRouter — це найчастіше «модель промазала».
+      // Серверні ретраї вже відпрацювали; показуємо як «ще обробляється»
+      // з loader-баром і даємо лише кнопку Видалити (повторити – ще раз ✨).
+      const isEmptyImage = isErr && /image_url/.test(g.error || "");
+      const tag = isEmptyImage
+        ? `<span class="user-tag">обробка</span>`
+        : isErr ? `<span class="skip-tag">помилка</span>` : `<span class="user-tag">готово</span>`;
+      // Заголовок: «Саня · варіант 2/3» (якщо є кілька варіантів) або
+      // просто ім'я, якщо варіант один.
+      const name = g.participant_name || "—";
+      const variant = g._variantTotal > 1
+        ? `<span class="variant-pill">варіант ${g._variantIdx}/${g._variantTotal}</span>`
+        : "";
+      const header = `<div class="queue-head"><strong>${escapeHtml(name)}</strong>${variant}</div>`;
+      const bodyText = isEmptyImage
+        ? `<div>Модель не повернула картинку — натисни ✨ Згенерувати ще раз</div><div class="loader-bar"></div>`
+        : `<div class="original">${escapeHtml(isErr ? (g.error || "") : meta)}</div>`;
       return `
         <div class="slot" data-gid="${g.id}" data-pid="${escapeHtml(g.participant_id || "")}">
-          ${isErr ? `<span class="skip-tag">помилка</span>` : `<span class="user-tag">готово</span>`}
+          ${tag}
+          ${header}
           <div class="preview">${img}</div>
-          <div class="original">${escapeHtml(isErr ? (g.error || "") : meta)}</div>
+          ${bodyText}
           <div class="row">
-            ${isErr ? "" : `<button type="button" class="gen-btn approve-btn">✓ Прийняти</button>`}
+            ${(isErr || !g.has_image) ? "" : `<button type="button" class="gen-btn approve-btn">✓ Прийняти</button>`}
             <button type="button" class="del-btn reject-btn">🗑 Видалити</button>
           </div>
         </div>
