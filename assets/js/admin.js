@@ -43,6 +43,7 @@ loaders.dashboard = async () => {
     statCard("Імена задані", `${p.named}`, `додано вручну: ${p.user_added}`),
     statCard("Генерацій", g.total, `done ${g.done} · err ${g.error} · pend ${g.pending}`, g.error ? "warn" : "ok"),
     statCard("Витрачено", `$${Number(g.total_cost).toFixed(4)}`, "OpenRouter"),
+    statCard("Скрінів", (s.screenshots && s.screenshots.total) || 0, `поч ${(s.screenshots && s.screenshots.starts) || 0} · кін ${(s.screenshots && s.screenshots.ends) || 0}`),
     statCard("Розмір БД", fmtBytes(s.db_size_bytes), `${s.presets} пресетів`),
     statCard("Код зустрічі", `<span class="mono" style="font-size:18px">${escapeHtml(s.settings.meeting_code || "—")}</span>`, `${s.settings.start} → ${s.settings.end}`),
     statCard("API ключ", s.settings.api_key_set ? "✓ задано" : "✗ немає", s.settings.gen_model, s.settings.api_key_set ? "ok" : "err"),
@@ -263,6 +264,7 @@ $("#g-del-all").addEventListener("click", () => bulkDel("all", "ВСЮ черг�
 // ─── модалка генерації ──────────────────────────────────────────────────────
 const modalBg = $("#modal-bg");
 function openGenModal(g) {
+  $("#modal-title").textContent = "Перегляд генерації";
   $("#modal-preview").innerHTML = g.has_image
     ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">`
     : `<div style="padding:20px;color:var(--muted)">Зображення немає</div>`;
@@ -292,6 +294,117 @@ function openGenModal(g) {
   modalBg.classList.add("show");
 }
 modalBg.addEventListener("click", e => { if (e.target === modalBg) modalBg.classList.remove("show"); });
+
+// ════════════════════════════════════════════════════════════════════════════
+// СКРІНИ (headless Chrome)
+// ════════════════════════════════════════════════════════════════════════════
+let shotCapturing = false;
+
+function shotStatsRow(list) {
+  const start = list.filter(s => s.which !== "end").length;
+  const end = list.filter(s => s.which === "end").length;
+  const bytes = list.reduce((a, s) => a + (Number(s.size_bytes) || 0), 0);
+  return [
+    statCard("Усього", list.length, "", "accent"),
+    statCard("Початок", start, "", "ok"),
+    statCard("Кінець", end),
+    statCard("Обсяг", fmtBytes(bytes)),
+  ].join("");
+}
+
+function shotCard(s) {
+  const whichLabel = s.which === "end" ? "кінець" : "початок";
+  const badge = `<span class="badge ${s.which === "end" ? "pending" : "done"}">${whichLabel}</span>`;
+  const sub = [s.created_at, fmtBytes(s.size_bytes), s.meeting_code, s.label].filter(Boolean).map(escapeHtml).join(" · ");
+  return `<div class="slot shot-card" data-sid="${s.id}">
+    <div class="queue-head"><strong>#${s.id}</strong>${badge}<span class="muted mono" style="margin-left:auto">${s.width}×${s.height}</span></div>
+    <div class="preview" data-sact="open"><img src="/api/screenshot-image/${s.id}?t=${Date.now()}" loading="lazy"></div>
+    <div class="original">${sub}</div>
+    <div class="row">
+      <button class="gen-btn" data-sact="dl">⤓ Завантажити</button>
+      <button class="iconbtn btn-sm" data-sact="open" title="збільшити">🔍</button>
+      <button class="iconbtn btn-sm danger" data-sact="del" title="видалити">🗑</button>
+    </div>
+  </div>`;
+}
+
+loaders.screenshots = async () => {
+  const list = await call("GET", "/api/screenshots");
+  $("#sh-stats").innerHTML = shotStatsRow(list);
+  $("#sh-gallery").innerHTML = list.map(shotCard).join("");
+  $("#sh-empty").hidden = list.length > 0;
+  list.forEach(s => wireShotCard(s));
+};
+
+function wireShotCard(s) {
+  const card = $(`#sh-gallery .slot[data-sid="${s.id}"]`);
+  if (!card) return;
+  card.addEventListener("click", async (ev) => {
+    const t = ev.target.closest("[data-sact]");
+    if (!t) return;
+    const act = t.dataset.sact;
+    if (act === "open") return openShotModal(s);
+    if (act === "dl") { location.href = `/api/screenshot-image/${s.id}?download=1`; return; }
+    if (act === "del") { await call("DELETE", `/api/screenshots/${s.id}`); toast("Видалено", "ok"); return loaders.screenshots(); }
+  });
+}
+
+function shotSize() {
+  const [w, h] = ($("#sh-size").value || "1280x720").split("x").map(Number);
+  return { width: w || 1280, height: h || 720 };
+}
+
+async function captureShot(which) {
+  if (shotCapturing) return;
+  shotCapturing = true;
+  const btns = [$("#sh-cap-start"), $("#sh-cap-end")];
+  btns.forEach(b => b.disabled = true);
+  const { width, height } = shotSize();
+  toast(`Роблю скрін (${which === "end" ? "кінець" : "початок"}, ${width}×${height})…`);
+  try {
+    const r = await call("POST", "/api/screenshots", { which, width, height });
+    toast(`Скрін #${r.id} готовий (${fmtBytes(r.size_bytes)})`, "ok");
+    await loaders.screenshots();
+  } catch (_) {
+    /* помилку вже показав toast у call() */
+  } finally {
+    shotCapturing = false;
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+function openShotModal(s) {
+  $("#modal-title").textContent = `Скрін #${s.id} — ${s.which === "end" ? "кінець" : "початок"}`;
+  $("#modal-preview").innerHTML = `<img src="/api/screenshot-image/${s.id}?t=${Date.now()}">`;
+  $("#modal-meta").innerHTML = [
+    `<span>${s.width}×${s.height}</span>`,
+    `<span>${fmtBytes(s.size_bytes)}</span>`,
+    s.meeting_code ? `<span>код: ${escapeHtml(s.meeting_code)}</span>` : "",
+    s.created_at ? `<span>${escapeHtml(s.created_at)}</span>` : "",
+  ].filter(Boolean).join("");
+  const acts = $("#modal-actions");
+  acts.innerHTML = "";
+  const close = () => modalBg.classList.remove("show");
+  const mk = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; acts.appendChild(b); };
+  mk("Закрити", "secondary", close);
+  mk("⤓ Завантажити", "", () => location.href = `/api/screenshot-image/${s.id}?download=1`);
+  mk("🗑 Видалити", "reject", async () => { await call("DELETE", `/api/screenshots/${s.id}`); close(); toast("Видалено", "ok"); loaders.screenshots(); });
+  modalBg.classList.add("show");
+}
+
+async function shotBulkDel(scope, label) {
+  if (!confirm(`Видалити ${label}?`)) return;
+  const r = await call("POST", "/api/screenshots/bulk-delete", { scope });
+  toast(`Видалено: ${r.deleted}`, "ok");
+  await loaders.screenshots();
+}
+
+$("#sh-cap-start").addEventListener("click", () => captureShot("start"));
+$("#sh-cap-end").addEventListener("click", () => captureShot("end"));
+$("#sh-refresh").addEventListener("click", () => loaders.screenshots());
+$("#sh-del-start").addEventListener("click", () => shotBulkDel("start", "усі скріни «початок»"));
+$("#sh-del-end").addEventListener("click", () => shotBulkDel("end", "усі скріни «кінець»"));
+$("#sh-del-all").addEventListener("click", () => shotBulkDel("all", "ВСЮ історію скрінів"));
 
 // ════════════════════════════════════════════════════════════════════════════
 // НАЛАШТУВАННЯ
@@ -402,8 +515,9 @@ async function loadSystem() {
   $("#sys-info").innerHTML = kv({
     "index.html": s.index_html.present ? `✓ ${fmtBytes(s.index_html.size)} · ${s.index_html.participant_ids} participant-id` : "✗ відсутній",
     "index.html.bak": s.index_bak.present ? `✓ ${fmtBytes(s.index_bak.size)}` : "✗ відсутній",
+    "Chrome (скріни)": s.chrome && s.chrome.available ? `✓ <span class="mono">${escapeHtml(s.chrome.path)}</span>` : "✗ не знайдено (скріни недоступні)",
     "assets": `${s.assets.fonts} шрифтів · ${s.assets.img} зобр · ${s.assets.emoji} emoji`,
-    "Python": escapeHtml(s.python),
+    "PHP": escapeHtml(s.php),
     "Платформа": escapeHtml(s.platform),
     "Порт": s.port,
     "Uptime": fmtDuration(s.uptime_seconds),
@@ -461,4 +575,4 @@ $("#imp-file").addEventListener("change", async (e) => {
 
 // ─── init ─────────────────────────────────────────────────────────────────
 const startTab = (location.hash || "#dashboard").slice(1);
-activateTab(["dashboard", "participants", "generations", "settings", "prompt", "system"].includes(startTab) ? startTab : "dashboard");
+activateTab(["dashboard", "participants", "generations", "screenshots", "settings", "prompt", "system"].includes(startTab) ? startTab : "dashboard");

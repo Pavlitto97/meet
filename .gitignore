@@ -2,8 +2,6 @@ data.db
 data.db-journal
 data.db-shm
 data.db-wal
-__pycache__/
-*.pyc
 .DS_Store
 .env
 .playwright-mcp/

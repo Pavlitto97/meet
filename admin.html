@@ -25,6 +25,7 @@
     <button class="tab active" data-tab="dashboard">Огляд</button>
     <button class="tab" data-tab="participants">Учасники</button>
     <button class="tab" data-tab="generations">Генерації</button>
+    <button class="tab" data-tab="screenshots">Скріни</button>
     <button class="tab" data-tab="settings">Налаштування</button>
     <button class="tab" data-tab="prompt">Промт</button>
     <button class="tab" data-tab="system">Система</button>
@@ -87,6 +88,27 @@
     <div class="stat-grid" id="g-stats" style="margin-bottom:16px"></div>
     <div class="gen-gallery" id="g-gallery"></div>
     <p class="muted" id="g-empty" hidden>Генерацій немає. Запусти ✨ зі вкладки «Учасники».</p>
+  </section>
+
+  <!-- ═══ СКРІНИ ═══ -->
+  <section class="panel" data-panel="screenshots">
+    <div class="toolbar">
+      <select id="sh-size" class="btn-sm" style="border-radius:16px;padding:8px 12px" title="Більше вікно → плитки учасників видно повністю">
+        <option value="1920x1080">1920×1080 (Full HD — плитки видно)</option>
+        <option value="1280x720">1280×720 (16:9)</option>
+      </select>
+      <button id="sh-cap-start">📸 Скрін початку</button>
+      <button id="sh-cap-end">📸 Скрін кінця</button>
+      <button id="sh-refresh" class="secondary">↻ Оновити</button>
+      <span class="toolbar-right"></span>
+      <button id="sh-del-start" class="danger btn-sm">🗑 Усі «початок»</button>
+      <button id="sh-del-end" class="danger btn-sm">🗑 Усі «кінець»</button>
+      <button id="sh-del-all" class="danger btn-sm">🗑 Очистити історію</button>
+    </div>
+    <p class="muted" style="margin:-4px 0 14px;max-width:900px">Скрін робиться через headless Chrome проти живого рендеру (<span class="mono">/api/render</span>) — піксель-в-піксель, з аватарками й шрифтами. Зберігається в історію нижче; кожен можна завантажити PNG-ом.</p>
+    <div class="stat-grid" id="sh-stats" style="margin-bottom:16px"></div>
+    <div class="shot-gallery" id="sh-gallery"></div>
+    <p class="muted" id="sh-empty" hidden>Скрінів ще немає. Натисни «📸 Скрін початку» або «Скрін кінця».</p>
   </section>
 
   <!-- ═══ НАЛАШТУВАННЯ ═══ -->
