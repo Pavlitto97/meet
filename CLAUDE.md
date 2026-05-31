@@ -35,11 +35,14 @@ meeteditor/                   ← Бекенд-пакет (namespace Meet; ли�
   bootstrap.php               ← Завантажує весь пакет; піднімає pcre.backtrack_limit
 data.db                       ← SQLite, створюється при першому запуску. У git не йде.
 assets/                       ← Локалізовані шрифти/іконки/логотипи Meet
-  css/app.css                 ← Спільний стиль редактора й адмінки
+  css/app.css                 ← Стиль РЕДАКТОРА (editor.html)
+  css/admin.css               ← Стиль АДМІНКИ (admin.html) — самодостатній, Material Design 3
+                                у дусі Google Meet (фон #202124, акцент #8ab4f8, шрифт Roboto)
   js/api.js                   ← Спільні JS-утиліти (api(), splitCollage, тости…)
   js/editor.js                ← Логіка редактора
   js/admin.js                 ← Логіка адмін-панелі
   fonts/                      ← woff/woff2 (Roboto, Google Sans, Google Symbols)
+  fonts/admin/                ← Roboto 400/500/700 (latin+cyrillic) для admin.css (офлайн)
   img/                        ← placeholder.svg + іконки Meet + emoji/
   vendor/flatpickr/           ← Пікер часу
 cleanup.php                   ← Прибирає <script>, обробники onX, посилання на google.*
@@ -302,7 +305,10 @@ daemon-потоку Python). Воркер `run_generation()`:
 - Бекенд — пакет `meeteditor/` (namespace `Meet`); `server.php`/`router.php`
   лишаються тонкими. Нову логіку клади у відповідний модуль.
 - Frontend — нативний HTML/JS, без фреймворків і бандлерів. Спільні утиліти —
-  `assets/js/api.js`; стиль — `assets/css/app.css` (один на редактор+адмінку).
+  `assets/js/api.js`. Стилі РОЗДІЛЕНІ: редактор — `assets/css/app.css`, адмінка —
+  `assets/css/admin.css` (самодостатній; правки адмінки не чіпають редактор і навпаки).
+  Адмінка витримана в стилі **Google Meet / Material Design** (темна тема Meet —
+  `#202124` + `#8ab4f8`, шрифт Roboto). Тримайся цього стилю; не вигадуй нову естетику.
 - Імена/код зустрічі/час — текстова заміна, не DOM-парсинг. DOMParser
   перепаковує атрибути і втрачає особливості Meet markup.
 - Зміни у `index.html` НІКОЛИ не пишуться напряму під час рендеру — лише

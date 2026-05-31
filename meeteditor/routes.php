@@ -91,6 +91,14 @@ route('GET', '/api/generation-image/(?P<gid>\d+)', function (Request $r) {
     [$blob, $mime] = $res;
     return new Response(200, $blob, $mime, ['Cache-Control' => 'no-store']);
 });
+route('GET', '/api/generation-input/(?P<gid>\d+)', function (Request $r) {
+    $res = generation_input((int) $r->params['gid']);
+    if (!$res) {
+        return Response::text('no input', 404);
+    }
+    [$blob, $mime] = $res;
+    return new Response(200, $blob, $mime, ['Cache-Control' => 'no-store']);
+});
 route('POST', '/api/generations/(?P<gid>\d+)/approve', fn(Request $r) => approve_generation((int) $r->params['gid'], $r->json()['which'] ?? 'start'));
 route('POST', '/api/generations/(?P<gid>\d+)/regenerate', fn(Request $r) => regenerate((int) $r->params['gid']));
 route('POST', '/api/generations/bulk-delete', fn(Request $r) => bulk_delete_generations($r->json()['scope'] ?? ''));

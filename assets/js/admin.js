@@ -14,6 +14,52 @@ async function call(method, path, body) {
   }
 }
 
+// ─── Діалоги (заміна нативних prompt/confirm на in-app Material-модалки) ───────
+function modalShell(inner) {
+  const bg = document.createElement("div");
+  bg.className = "modal-bg show";
+  bg.innerHTML = `<div class="modal modal-sm" role="dialog" aria-modal="true">${inner}</div>`;
+  document.body.appendChild(bg);
+  return bg;
+}
+/** Текстовий ввід. Повертає Promise<string|null> (null = скасовано). */
+function promptModal({ title = "", label = "", placeholder = "", value = "", okText = "OK" } = {}) {
+  return new Promise(resolve => {
+    const bg = modalShell(
+      `<h3>${escapeHtml(title)}</h3>` +
+      (label ? `<label class="modal-label">${escapeHtml(label)}</label>` : "") +
+      `<input class="modal-input" type="text" placeholder="${escapeHtml(placeholder)}">` +
+      `<div class="modal-actions"><button class="secondary" data-act="cancel">Скасувати</button><button data-act="ok">${escapeHtml(okText)}</button></div>`
+    );
+    const input = bg.querySelector(".modal-input");
+    input.value = value;
+    const done = v => { document.removeEventListener("keydown", onKey, true); bg.remove(); resolve(v); };
+    function onKey(e) { if (e.key === "Escape") { e.preventDefault(); done(null); } else if (e.key === "Enter") { e.preventDefault(); done(input.value); } }
+    bg.querySelector('[data-act="cancel"]').onclick = () => done(null);
+    bg.querySelector('[data-act="ok"]').onclick = () => done(input.value);
+    bg.addEventListener("mousedown", e => { if (e.target === bg) done(null); });
+    document.addEventListener("keydown", onKey, true);
+    requestAnimationFrame(() => { input.focus(); input.select(); });
+  });
+}
+/** Підтвердження. Повертає Promise<boolean>. */
+function confirmModal({ title = "", message = "", okText = "OK", danger = false } = {}) {
+  return new Promise(resolve => {
+    const bg = modalShell(
+      `<h3>${escapeHtml(title)}</h3>` +
+      (message ? `<p class="modal-msg">${escapeHtml(message)}</p>` : "") +
+      `<div class="modal-actions"><button class="secondary" data-act="cancel">Скасувати</button><button data-act="ok"${danger ? ' class="reject"' : ''}>${escapeHtml(okText)}</button></div>`
+    );
+    const done = v => { document.removeEventListener("keydown", onKey, true); bg.remove(); resolve(v); };
+    function onKey(e) { if (e.key === "Escape") { e.preventDefault(); done(false); } else if (e.key === "Enter") { e.preventDefault(); done(true); } }
+    bg.querySelector('[data-act="cancel"]').onclick = () => done(false);
+    bg.querySelector('[data-act="ok"]').onclick = () => done(true);
+    bg.addEventListener("mousedown", e => { if (e.target === bg) done(false); });
+    document.addEventListener("keydown", onKey, true);
+    requestAnimationFrame(() => bg.querySelector('[data-act="ok"]').focus());
+  });
+}
+
 // ─── Вкладки ───────────────────────────────────────────────────────────────
 const loaders = {};            // tab → async loader
 const loadedOnce = new Set();
@@ -25,39 +71,28 @@ function activateTab(name) {
   if (name === "generations") genPoll.start(); else genPoll.stop();
 }
 $$("#tabs .tab").forEach(t => t.addEventListener("click", () => activateTab(t.dataset.tab)));
+// Deep-link / back-forward: реагуємо на зміну хешу (activateTab сам пише хеш —
+// guard на «вже активна» гасить повторний прохід).
+window.addEventListener("hashchange", () => {
+  const name = (location.hash || "#participants").slice(1);
+  const cur = $("#tabs .tab.active") && $("#tabs .tab.active").dataset.tab;
+  if (name !== cur && $(`#tabs .tab[data-tab="${name}"]`)) activateTab(name);
+});
 
 // ════════════════════════════════════════════════════════════════════════════
-// ОГЛЯД
+// СПІЛЬНЕ: картка-показник + дії рендеру в шапці
 // ════════════════════════════════════════════════════════════════════════════
 function statCard(label, value, sub = "", cls = "") {
   return `<div class="stat-card ${cls}"><span class="label">${escapeHtml(label)}</span>` +
          `<span class="value">${value}</span>` +
          (sub ? `<span class="sub">${escapeHtml(sub)}</span>` : "") + `</div>`;
 }
-loaders.dashboard = async () => {
-  const s = await call("GET", "/api/admin/stats");
-  const p = s.participants, g = s.generations;
-  $("#stat-grid").innerHTML = [
-    statCard("Учасників", p.total, `${p.editable} активних · ${p.skipped} пропущено`, "accent"),
-    statCard("З аватаром", `${p.with_avatar}/${p.editable}`, `${p.with_avatar_end} мають кінцеву`),
-    statCard("Імена задані", `${p.named}`, `додано вручну: ${p.user_added}`),
-    statCard("Генерацій", g.total, `done ${g.done} · err ${g.error} · pend ${g.pending}`, g.error ? "warn" : "ok"),
-    statCard("Витрачено", `$${Number(g.total_cost).toFixed(4)}`, "OpenRouter"),
-    statCard("Скрінів", (s.screenshots && s.screenshots.total) || 0, `поч ${(s.screenshots && s.screenshots.starts) || 0} · кін ${(s.screenshots && s.screenshots.ends) || 0}`),
-    statCard("Розмір БД", fmtBytes(s.db_size_bytes), `${s.presets} пресетів`),
-    statCard("Код зустрічі", `<span class="mono" style="font-size:18px">${escapeHtml(s.settings.meeting_code || "—")}</span>`, `${s.settings.start} → ${s.settings.end}`),
-    statCard("API ключ", s.settings.api_key_set ? "✓ задано" : "✗ немає", s.settings.gen_model, s.settings.api_key_set ? "ok" : "err"),
-  ].join("");
-  const tb = $("#cost-table tbody");
-  tb.innerHTML = (s.cost_by_model || []).map(m =>
-    `<tr><td class="mono">${escapeHtml(m.model)}</td><td>${m.n}</td><td>$${Number(m.cost).toFixed(5)}</td></tr>`
-  ).join("") || `<tr><td colspan="3" class="muted">немає даних</td></tr>`;
-};
-$("#dash-refresh").addEventListener("click", () => loaders.dashboard());
-$("#dash-preview-start").addEventListener("click", () => window.open("/api/render?which=start&t=" + Date.now(), "meet-start"));
-$("#dash-preview-end").addEventListener("click", () => window.open("/api/render?which=end&t=" + Date.now(), "meet-end"));
-$("#dash-dl-start").addEventListener("click", () => location.href = "/api/render?which=start&download=1");
-$("#dash-dl-end").addEventListener("click", () => location.href = "/api/render?which=end&download=1");
+// Дії рендеру (перенесені з колишнього «Огляду») живуть у шапці. href лишається
+// як graceful fallback; JS додає cache-bust, щоб прев'ю завжди було свіже.
+$("#hd-preview-start").addEventListener("click", e => { e.preventDefault(); window.open("/api/render?which=start&t=" + Date.now(), "meet-start"); });
+$("#hd-preview-end").addEventListener("click", e => { e.preventDefault(); window.open("/api/render?which=end&t=" + Date.now(), "meet-end"); });
+$("#hd-dl-start").addEventListener("click", e => { e.preventDefault(); location.href = "/api/render?which=start&download=1"; });
+$("#hd-dl-end").addEventListener("click", e => { e.preventDefault(); location.href = "/api/render?which=end&download=1"; });
 
 // ════════════════════════════════════════════════════════════════════════════
 // УЧАСНИКИ
@@ -72,20 +107,19 @@ function thumb(p, which) {
 }
 
 function participantRow(p, idx, total) {
-  const up = idx > 0 ? `<button class="iconbtn btn-sm" data-act="up" title="вище">↑</button>` : `<span style="display:inline-block;width:28px"></span>`;
-  const down = idx < total - 1 ? `<button class="iconbtn btn-sm" data-act="down" title="нижче">↓</button>` : "";
+  const up = `<button class="iconbtn btn-sm" data-act="up" title="вище"${idx === 0 ? " disabled" : ""}><span class="msym sm">arrow_upward</span></button>`;
+  const down = `<button class="iconbtn btn-sm" data-act="down" title="нижче"${idx >= total - 1 ? " disabled" : ""}><span class="msym sm">arrow_downward</span></button>`;
   const tags = (p.user_added ? `<span class="badge user">вручну</span> ` : "");
   return `<tr data-id="${escapeHtml(p.device_id)}" class="${p.skipped ? "skipped" : ""}">
-    <td><div class="flex" style="gap:2px">${up}${down}<span class="muted mono">${p.position}</span></div></td>
+    <td><div class="num-cell"><span class="rownum mono">${idx + 1}</span><div class="reorder">${up}${down}</div></div></td>
     <td><div class="flex" style="gap:6px">${thumb(p, "start")}${thumb(p, "end")}</div></td>
     <td><input class="i-name" value="${escapeHtml(p.custom_name || "")}" placeholder="${escapeHtml(p.original_name || "")}">${tags ? "<div style='margin-top:4px'>" + tags + "</div>" : ""}</td>
-    <td><input class="i-orig mono" value="${escapeHtml(p.original_name || "")}" title="оригінальний рядок у HTML — заміняється на custom"></td>
     <td style="text-align:center"><input type="checkbox" class="i-skip" ${p.skipped ? "checked" : ""}></td>
     <td><div class="flex" style="gap:4px">
-      <button class="iconbtn btn-sm" data-act="upload" title="завантажити фото (початок)">⤒</button>
-      <button class="iconbtn btn-sm" data-act="gen" ${p.skipped ? "disabled" : ""} title="згенерувати AI-колаж">✨</button>
-      <button class="iconbtn btn-sm" data-act="clear" title="прибрати аватарки">×</button>
-      ${p.user_added ? `<button class="iconbtn btn-sm danger" data-act="del" title="видалити">🗑</button>` : ""}
+      <button class="iconbtn btn-sm" data-act="upload" title="завантажити фото (початок)"><span class="msym sm">upload</span></button>
+      <button class="iconbtn btn-sm" data-act="gen" ${p.skipped ? "disabled" : ""} title="згенерувати AI-колаж"><span class="msym sm">auto_awesome</span></button>
+      <button class="iconbtn btn-sm" data-act="clear" title="прибрати аватарки"><span class="msym sm">close</span></button>
+      ${p.user_added ? `<button class="iconbtn btn-sm danger" data-act="del" title="видалити"><span class="msym sm">delete</span></button>` : ""}
     </div></td>
   </tr>`;
 }
@@ -104,7 +138,6 @@ function wireParticipantRow(p) {
   const save = (body, msg) => call("PUT", `/api/participants/${ENC(did)}`, body).then(() => toast(msg || "Збережено", "ok"));
 
   $(".i-name", tr).addEventListener("change", e => save({ custom_name: e.target.value || null }));
-  $(".i-orig", tr).addEventListener("change", e => { if (e.target.value.trim()) save({ original_name: e.target.value }); });
   $(".i-skip", tr).addEventListener("change", e => save({ skipped: e.target.checked ? 1 : 0 }).then(() => loaders.participants()));
 
   tr.addEventListener("click", async (ev) => {
@@ -133,7 +166,7 @@ function wireParticipantRow(p) {
       toast("Аватарки прибрано", "ok");
       await loaders.participants();
     } else if (act === "del") {
-      if (!confirm(`Видалити «${p.custom_name || p.original_name}» назавжди?`)) return;
+      if (!await confirmModal({ title: "Видалити учасника?", message: `«${p.custom_name || p.original_name}» буде видалено назавжди.`, okText: "Видалити", danger: true })) return;
       await call("DELETE", `/api/participants/${ENC(did)}?hard=1`);
       toast("Видалено", "ok");
       await loaders.participants();
@@ -153,7 +186,7 @@ $("#p-file").addEventListener("change", async (e) => {
 });
 
 $("#p-add").addEventListener("click", async () => {
-  const name = prompt("Імʼя нового учасника:");
+  const name = await promptModal({ title: "Новий учасник", label: "Імʼя учасника", placeholder: "напр. Олег", okText: "Додати" });
   if (!name || !name.trim()) return;
   await call("POST", "/api/participants", { custom_name: name.trim() });
   toast("Додано", "ok");
@@ -197,19 +230,37 @@ function genCard(g) {
     : isEmptyImage ? `<span class="badge pending">порожньо — повтори</span>`
     : isErr ? `<span class="badge err">помилка</span>`
     : `<span class="badge pending">в обробці</span>`;
-  const img = g.has_image ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">` : "";
+  const resultImg = g.has_image ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">` : "";
+  // Якщо є заморожений оригінал — показуємо «оригінал → результат» поруч.
+  const preview = g.has_input
+    ? `<div class="gen-compare">
+         <figure class="gen-shot"><figcaption>оригінал</figcaption>
+           <div class="preview sm" data-gact="open-input"><img src="/api/generation-input/${g.id}?t=${Date.now()}"></div></figure>
+         <span class="msym gen-arrow">arrow_forward</span>
+         <figure class="gen-shot"><figcaption>результат</figcaption>
+           <div class="preview sm" data-gact="open">${resultImg}</div></figure>
+       </div>`
+    : `<div class="preview" data-gact="open">${resultImg}</div>`;
   const meta = [g.model, g.provider, g.service_tier, g.cost_usd != null ? `$${Number(g.cost_usd).toFixed(5)}` : ""].filter(Boolean).join(" · ");
   const body = g.status === "pending"
     ? `<div class="loader-bar"></div>`
     : isErr ? `<div class="original">${escapeHtml(g.error || "")}</div>`
     : `<div class="original">${escapeHtml(meta)}</div>`;
   const actions = (g.status === "done" && g.has_image) ? `
-    <div class="row"><button class="gen-btn" data-gact="split">✂ Розрізати</button><button class="iconbtn btn-sm" data-gact="open">🔍</button><button class="iconbtn btn-sm danger" data-gact="del">🗑</button></div>`
-    : isErr ? `<div class="row"><button class="gen-btn" data-gact="regen">↻ Повторити</button><button class="iconbtn btn-sm danger" data-gact="del">🗑</button></div>`
+    <div class="row">
+      <button class="gen-btn" data-gact="split"><span class="msym sm">content_cut</span> Розрізати</button>
+      <button class="gen-btn" data-gact="regen" title="нова картинка з того ж оригіналу й промту"><span class="msym sm">autorenew</span> Перегенерувати</button>
+      <button class="iconbtn btn-sm danger" data-gact="del" title="видалити"><span class="msym sm">delete</span></button>
+    </div>`
+    : isErr ? `
+    <div class="row">
+      <button class="gen-btn" data-gact="regen"><span class="msym sm">autorenew</span> Повторити</button>
+      <button class="iconbtn btn-sm danger" data-gact="del" title="видалити"><span class="msym sm">delete</span></button>
+    </div>`
     : "";
   return `<div class="slot" data-gid="${g.id}" data-pid="${escapeHtml(g.participant_id || "")}">
     <div class="queue-head"><strong>${escapeHtml(g.participant_name || "—")}</strong>${badge}</div>
-    <div class="preview" data-gact="open">${img}</div>
+    ${preview}
     ${body}
     ${actions}
   </div>`;
@@ -221,6 +272,9 @@ loaders.generations = async () => {
   $("#g-stats").innerHTML = genStatsRow(list);
   $("#g-gallery").innerHTML = list.map(genCard).join("");
   $("#g-empty").hidden = list.length > 0;
+  $("#g-del-errors").hidden = !list.some(g => g.status === "error");
+  $("#g-del-done").hidden = !list.some(g => g.status === "done");
+  $("#g-del-all").hidden = list.length === 0;
   list.forEach(g => wireGenCard(g));
   // авто-стоп опитування коли нічого не крутиться
   if (!list.some(g => g.status === "pending")) genPoll.stop();
@@ -234,8 +288,9 @@ function wireGenCard(g) {
     if (!t) return;
     const act = t.dataset.gact;
     if (act === "open") return openGenModal(g);
+    if (act === "open-input") return openImageModal(`Оригінал — ${g.participant_name || "#" + g.id}`, `/api/generation-input/${g.id}?t=${Date.now()}`);
     if (act === "del") { await call("DELETE", `/api/generations/${g.id}`); toast("Видалено", "ok"); return loaders.generations(); }
-    if (act === "regen") { const r = await call("POST", `/api/generations/${g.id}/regenerate`); toast(`Повтор #${r.id}`, "ok"); genPoll.start(); return; }
+    if (act === "regen") { const r = await call("POST", `/api/generations/${g.id}/regenerate`); toast(`Перегенерація #${r.id} — з того ж оригіналу`, "ok"); genPoll.start(); return; }
     if (act === "split") return approveSplit(g);
   });
 }
@@ -252,7 +307,7 @@ async function approveSplit(g) {
 $("#g-refresh").addEventListener("click", () => loaders.generations());
 $("#g-filter-status").addEventListener("change", () => loaders.generations());
 async function bulkDel(scope, label) {
-  if (!confirm(`Видалити ${label}?`)) return;
+  if (!await confirmModal({ title: "Підтвердь видалення", message: `Видалити ${label}?`, okText: "Видалити", danger: true })) return;
   const r = await call("POST", "/api/generations/bulk-delete", { scope });
   toast(`Видалено: ${r.deleted}`, "ok");
   await loaders.generations();
@@ -263,6 +318,20 @@ $("#g-del-all").addEventListener("click", () => bulkDel("all", "ВСЮ черг�
 
 // ─── модалка генерації ──────────────────────────────────────────────────────
 const modalBg = $("#modal-bg");
+/** Просте модальне вікно для одного зображення (оригінал генерації тощо). */
+function openImageModal(title, src) {
+  $("#modal-title").textContent = title;
+  $("#modal-preview").innerHTML = `<img src="${src}">`;
+  $("#modal-meta").innerHTML = "";
+  const acts = $("#modal-actions");
+  acts.innerHTML = "";
+  const b = document.createElement("button");
+  b.textContent = "Закрити";
+  b.className = "secondary";
+  b.onclick = () => modalBg.classList.remove("show");
+  acts.appendChild(b);
+  modalBg.classList.add("show");
+}
 function openGenModal(g) {
   $("#modal-title").textContent = "Перегляд генерації";
   $("#modal-preview").innerHTML = g.has_image
@@ -281,15 +350,15 @@ function openGenModal(g) {
   const close = () => modalBg.classList.remove("show");
   const mk = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; acts.appendChild(b); };
   mk("Закрити", "secondary", close);
-  mk("🗑 Видалити", "reject", async () => { await call("DELETE", `/api/generations/${g.id}`); close(); loaders.generations(); });
+  mk("Видалити", "reject", async () => { await call("DELETE", `/api/generations/${g.id}`); close(); loaders.generations(); });
   if (g.status === "done" && g.has_image) {
     if (g.participant_id) {
       mk("→ Початок", "secondary", async () => { await call("POST", `/api/generations/${g.id}/approve`, { which: "start" }); close(); toast("Прийнято як аватар (початок)", "ok"); loaders.generations(); loaders.participants(); });
       mk("→ Кінець", "secondary", async () => { await call("POST", `/api/generations/${g.id}/approve`, { which: "end" }); close(); toast("Прийнято як аватар (кінець)", "ok"); loaders.generations(); loaders.participants(); });
-      mk("✂ Розрізати (поч+кін)", "", async () => { await approveSplit(g); close(); loaders.participants(); });
+      mk("Розрізати (початок + кінець)", "", async () => { await approveSplit(g); close(); loaders.participants(); });
     }
   } else if (g.status === "error") {
-    mk("↻ Повторити", "", async () => { await call("POST", `/api/generations/${g.id}/regenerate`); close(); genPoll.start(); });
+    mk("Повторити", "", async () => { await call("POST", `/api/generations/${g.id}/regenerate`); close(); genPoll.start(); });
   }
   modalBg.classList.add("show");
 }
@@ -321,9 +390,9 @@ function shotCard(s) {
     <div class="preview" data-sact="open"><img src="/api/screenshot-image/${s.id}?t=${Date.now()}" loading="lazy"></div>
     <div class="original">${sub}</div>
     <div class="row">
-      <button class="gen-btn" data-sact="dl">⤓ Завантажити</button>
-      <button class="iconbtn btn-sm" data-sact="open" title="збільшити">🔍</button>
-      <button class="iconbtn btn-sm danger" data-sact="del" title="видалити">🗑</button>
+      <button class="gen-btn" data-sact="dl"><span class="msym sm">download</span> Завантажити</button>
+      <button class="iconbtn btn-sm" data-sact="open" title="збільшити"><span class="msym sm">zoom_in</span></button>
+      <button class="iconbtn btn-sm danger" data-sact="del" title="видалити"><span class="msym sm">delete</span></button>
     </div>
   </div>`;
 }
@@ -332,7 +401,10 @@ loaders.screenshots = async () => {
   const list = await call("GET", "/api/screenshots");
   $("#sh-stats").innerHTML = shotStatsRow(list);
   $("#sh-gallery").innerHTML = list.map(shotCard).join("");
-  $("#sh-empty").hidden = list.length > 0;
+  const shEnd = list.filter(s => s.which === "end").length, shStart = list.length - shEnd;
+  $("#sh-del-start").hidden = shStart === 0;
+  $("#sh-del-end").hidden = shEnd === 0;
+  $("#sh-del-all").hidden = list.length === 0;
   list.forEach(s => wireShotCard(s));
 };
 
@@ -387,13 +459,13 @@ function openShotModal(s) {
   const close = () => modalBg.classList.remove("show");
   const mk = (label, cls, fn) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; acts.appendChild(b); };
   mk("Закрити", "secondary", close);
-  mk("⤓ Завантажити", "", () => location.href = `/api/screenshot-image/${s.id}?download=1`);
-  mk("🗑 Видалити", "reject", async () => { await call("DELETE", `/api/screenshots/${s.id}`); close(); toast("Видалено", "ok"); loaders.screenshots(); });
+  mk("Завантажити", "", () => location.href = `/api/screenshot-image/${s.id}?download=1`);
+  mk("Видалити", "reject", async () => { await call("DELETE", `/api/screenshots/${s.id}`); close(); toast("Видалено", "ok"); loaders.screenshots(); });
   modalBg.classList.add("show");
 }
 
 async function shotBulkDel(scope, label) {
-  if (!confirm(`Видалити ${label}?`)) return;
+  if (!await confirmModal({ title: "Підтвердь видалення", message: `Видалити ${label}?`, okText: "Видалити", danger: true })) return;
   const r = await call("POST", "/api/screenshots/bulk-delete", { scope });
   toast(`Видалено: ${r.deleted}`, "ok");
   await loaders.screenshots();
@@ -482,7 +554,7 @@ async function loadPresets() {
   const tb = $("#pr-presets tbody");
   tb.innerHTML = list.map(p =>
     `<tr data-pid="${p.id}"><td>${escapeHtml(p.name)}</td><td class="muted">${escapeHtml(p.updated_at || "")}</td>
-     <td><div class="flex" style="gap:4px"><button class="iconbtn btn-sm" data-pact="load">↧ Завантажити</button><button class="iconbtn btn-sm danger" data-pact="del">🗑</button></div></td></tr>`
+     <td><div class="flex" style="gap:4px"><button class="iconbtn btn-sm" data-pact="load"><span class="msym sm">download</span>Завантажити</button><button class="iconbtn btn-sm danger" data-pact="del"><span class="msym sm">delete</span></button></div></td></tr>`
   ).join("");
   $("#pr-presets-empty").hidden = list.length > 0;
   tb.querySelectorAll("tr").forEach(tr => {
@@ -505,74 +577,6 @@ $("#pr-preset-save").addEventListener("click", async () => {
   loadPresets();
 });
 
-// ════════════════════════════════════════════════════════════════════════════
-// СИСТЕМА
-// ════════════════════════════════════════════════════════════════════════════
-function kv(obj) { return Object.entries(obj).map(([k, v]) => `<span class="k">${escapeHtml(k)}</span><span>${v}</span>`).join(""); }
-loaders.system = async () => { await Promise.all([loadSystem(), loadDbInfo(), loadActivity()]); };
-async function loadSystem() {
-  const s = await call("GET", "/api/admin/system");
-  $("#sys-info").innerHTML = kv({
-    "index.html": s.index_html.present ? `✓ ${fmtBytes(s.index_html.size)} · ${s.index_html.participant_ids} participant-id` : "✗ відсутній",
-    "index.html.bak": s.index_bak.present ? `✓ ${fmtBytes(s.index_bak.size)}` : "✗ відсутній",
-    "Chrome (скріни)": s.chrome && s.chrome.available ? `✓ <span class="mono">${escapeHtml(s.chrome.path)}</span>` : "✗ не знайдено (скріни недоступні)",
-    "assets": `${s.assets.fonts} шрифтів · ${s.assets.img} зобр · ${s.assets.emoji} emoji`,
-    "PHP": escapeHtml(s.php),
-    "Платформа": escapeHtml(s.platform),
-    "Порт": s.port,
-    "Uptime": fmtDuration(s.uptime_seconds),
-  });
-}
-async function loadDbInfo() {
-  const d = await call("GET", "/api/admin/db");
-  const rows = Object.entries(d.rows).map(([t, n]) => `${t}: ${n ?? "—"}`).join(" · ");
-  $("#db-info").innerHTML = kv({
-    "Файл": `<span class="mono">data.db</span> · ${fmtBytes(d.size_bytes)}`,
-    "Таблиці": rows,
-    "Сторінки": `${d.page_count} × ${fmtBytes(d.page_size)} (вільних: ${d.freelist_count})`,
-  });
-}
-async function loadActivity() {
-  const list = await call("GET", "/api/admin/activity?limit=100");
-  $("#activity-log").innerHTML = list.map(a =>
-    `<div class="row-log"><span class="ts mono">${escapeHtml(a.ts || "")}</span><span class="act">${escapeHtml(a.action)}</span><span>${escapeHtml(a.detail || "")}</span></div>`
-  ).join("") || `<div class="row-log muted">журнал порожній</div>`;
-}
-$("#sys-refresh").addEventListener("click", loadSystem);
-$("#act-refresh").addEventListener("click", loadActivity);
-$("#db-backup").addEventListener("click", () => location.href = "/api/admin/backup");
-$("#db-vacuum").addEventListener("click", async () => {
-  const r = await call("POST", "/api/admin/db/vacuum", {});
-  toast(`VACUUM ок — ${fmtBytes(r.size_bytes)}`, "ok");
-  loadDbInfo();
-});
-$("#db-reset").addEventListener("click", async () => {
-  const c = prompt("Це СКИНЕ всю базу (учасники, аватарки, генерації) до дефолтів.\nВведи RESET щоб підтвердити:");
-  if (c !== "RESET") { if (c !== null) toast("Скасовано — введи рівно RESET", "err"); return; }
-  await call("POST", "/api/admin/db/reset", { confirm: "RESET" });
-  toast("Базу скинуто", "ok");
-  await loaders.system(); await loaders.dashboard();
-});
-$("#idx-restore").addEventListener("click", async () => {
-  const c = prompt("Відновити index.html з index.html.bak (перезапише поточний).\nВведи RESTORE щоб підтвердити:");
-  if (c !== "RESTORE") { if (c !== null) toast("Скасовано — введи рівно RESTORE", "err"); return; }
-  const r = await call("POST", "/api/admin/restore-index", { confirm: "RESTORE" });
-  toast(`index.html відновлено — ${fmtBytes(r.size_bytes)}`, "ok");
-  loadSystem();
-});
-$("#imp-btn").addEventListener("click", () => $("#imp-file").click());
-$("#imp-file").addEventListener("change", async (e) => {
-  const file = e.target.files[0]; if (!file) return;
-  if (!confirm("Імпорт перезапише налаштування, промт, пресети й аватарки з файлу. Продовжити?")) { e.target.value = ""; return; }
-  try {
-    const data = JSON.parse(await file.text());
-    const r = await call("POST", "/api/admin/import", data);
-    toast(`Імпорт: учасники +${r.participants_created}/~${r.participants_updated}, пресети ${r.presets}, налашт. ${r.settings}`, "ok");
-    await loaders.system(); await loaders.dashboard();
-  } catch (err) { toast("Помилка імпорту: " + err.message, "err"); }
-  e.target.value = "";
-});
-
 // ─── init ─────────────────────────────────────────────────────────────────
-const startTab = (location.hash || "#dashboard").slice(1);
-activateTab(["dashboard", "participants", "generations", "screenshots", "settings", "prompt", "system"].includes(startTab) ? startTab : "dashboard");
+const startTab = (location.hash || "#participants").slice(1);
+activateTab(["participants", "generations", "screenshots", "settings", "prompt"].includes(startTab) ? startTab : "participants");

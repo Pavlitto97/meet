@@ -7,60 +7,42 @@
   <title>Meet — адмін-панель</title>
   <link rel="stylesheet" href="assets/vendor/flatpickr/flatpickr.min.css">
   <link rel="stylesheet" href="assets/vendor/flatpickr/dark.css">
-  <link rel="stylesheet" href="assets/css/app.css">
+  <link rel="stylesheet" href="assets/css/admin.css">
   <script src="assets/vendor/flatpickr/flatpickr.min.js"></script>
 </head>
 <body>
 <div class="admin-shell">
   <div class="admin-head">
-    <h1>⚙ Адмін-панель Meet</h1>
-    <span class="muted" id="subtitle">керування зустріччю, учасниками та генераціями</span>
+    <h1><span class="msym">settings</span> Адмін-панель Meet</h1>
     <div class="links">
-      <a href="editor.html">← Редактор</a>
-      <a href="/api/render?which=start" target="_blank">Перегляд ▶</a>
+      <a href="editor.html"><span class="msym">arrow_back</span> Редактор</a>
+      <a id="hd-preview-start" href="/api/render?which=start" target="_blank" title="Перегляд рендеру (початок)"><span class="msym">play_arrow</span> Перегляд</a>
+      <a id="hd-preview-end" href="/api/render?which=end" target="_blank" title="Перегляд рендеру (кінець)"><span class="msym">fast_forward</span> Кінець</a>
+      <a id="hd-dl-start" href="/api/render?which=start&download=1" title="Завантажити HTML (початок)"><span class="msym">download</span> HTML</a>
+      <a id="hd-dl-end" href="/api/render?which=end&download=1" title="Завантажити HTML (кінець)"><span class="msym">download</span> HTML кін</a>
     </div>
   </div>
 
   <nav class="tabs" id="tabs">
-    <button class="tab active" data-tab="dashboard">Огляд</button>
-    <button class="tab" data-tab="participants">Учасники</button>
+    <button class="tab active" data-tab="participants">Учасники</button>
     <button class="tab" data-tab="generations">Генерації</button>
     <button class="tab" data-tab="screenshots">Скріни</button>
     <button class="tab" data-tab="settings">Налаштування</button>
     <button class="tab" data-tab="prompt">Промт</button>
-    <button class="tab" data-tab="system">Система</button>
   </nav>
 
-  <!-- ═══ ОГЛЯД ═══ -->
-  <section class="panel active" data-panel="dashboard">
-    <div class="toolbar">
-      <button id="dash-refresh" class="secondary">↻ Оновити</button>
-      <button id="dash-preview-start" class="secondary">▶ Перегляд (початок)</button>
-      <button id="dash-preview-end" class="secondary">⏵⏵ Перегляд (кінець)</button>
-      <button id="dash-dl-start" class="secondary">⤓ HTML початок</button>
-      <button id="dash-dl-end" class="secondary">⤓ HTML кінець</button>
-    </div>
-    <div class="stat-grid" id="stat-grid"></div>
-    <div class="card" style="margin-top:16px">
-      <h3>Вартість генерацій за моделями</h3>
-      <table class="data" id="cost-table"><thead><tr><th>Модель</th><th>К-сть</th><th>Сума, $</th></tr></thead><tbody></tbody></table>
-    </div>
-  </section>
-
   <!-- ═══ УЧАСНИКИ ═══ -->
-  <section class="panel" data-panel="participants">
+  <section class="panel active" data-panel="participants">
     <div class="toolbar">
-      <button id="p-add">+ Додати учасника</button>
-      <button id="p-refresh" class="secondary">↻ Оновити</button>
-      <span class="muted">Стрілки ↑↓ змінюють порядок плиток у рендері. «Пропуск» ховає учасника з редактора (placeholder-силует).</span>
+      <button id="p-add"><span class="msym">add</span>Додати учасника</button>
+      <button id="p-refresh" class="secondary"><span class="msym">refresh</span>Оновити</button>
     </div>
     <table class="data" id="p-table">
       <thead>
         <tr>
-          <th style="width:60px">№</th>
+          <th style="width:88px">№</th>
           <th>Аватарки</th>
-          <th>Імʼя (custom)</th>
-          <th>Оригінал у HTML</th>
+          <th>Імʼя</th>
           <th style="width:70px">Пропуск</th>
           <th style="width:230px">Дії</th>
         </tr>
@@ -73,7 +55,7 @@
   <!-- ═══ ГЕНЕРАЦІЇ ═══ -->
   <section class="panel" data-panel="generations">
     <div class="toolbar">
-      <button id="g-refresh" class="secondary">↻ Оновити</button>
+      <button id="g-refresh" class="secondary"><span class="msym">refresh</span>Оновити</button>
       <select id="g-filter-status" class="btn-sm" style="border-radius:16px;padding:8px 12px">
         <option value="">усі статуси</option>
         <option value="done">done</option>
@@ -81,34 +63,32 @@
         <option value="error">error</option>
       </select>
       <span class="toolbar-right"></span>
-      <button id="g-del-errors" class="danger btn-sm">🗑 Видалити всі помилки</button>
-      <button id="g-del-done" class="danger btn-sm">🗑 Видалити всі done</button>
-      <button id="g-del-all" class="danger btn-sm">🗑 Очистити чергу</button>
+      <button id="g-del-errors" class="danger btn-sm"><span class="msym sm">delete</span>Видалити всі помилки</button>
+      <button id="g-del-done" class="danger btn-sm"><span class="msym sm">delete</span>Видалити всі done</button>
+      <button id="g-del-all" class="danger btn-sm"><span class="msym sm">delete</span>Очистити чергу</button>
     </div>
-    <div class="stat-grid" id="g-stats" style="margin-bottom:16px"></div>
+    <div class="stat-grid compact" id="g-stats" style="margin-bottom:16px"></div>
     <div class="gen-gallery" id="g-gallery"></div>
-    <p class="muted" id="g-empty" hidden>Генерацій немає. Запусти ✨ зі вкладки «Учасники».</p>
+    <p class="muted" id="g-empty" hidden>Генерацій немає. Запусти <span class="msym sm">auto_awesome</span> зі вкладки «Учасники».</p>
   </section>
 
   <!-- ═══ СКРІНИ ═══ -->
   <section class="panel" data-panel="screenshots">
     <div class="toolbar">
       <select id="sh-size" class="btn-sm" style="border-radius:16px;padding:8px 12px" title="Більше вікно → плитки учасників видно повністю">
-        <option value="1920x1080">1920×1080 (Full HD — плитки видно)</option>
-        <option value="1280x720">1280×720 (16:9)</option>
+        <option value="1920x1080">1920×1080</option>
+        <option value="1280x720">1280×720</option>
       </select>
-      <button id="sh-cap-start">📸 Скрін початку</button>
-      <button id="sh-cap-end">📸 Скрін кінця</button>
-      <button id="sh-refresh" class="secondary">↻ Оновити</button>
+      <button id="sh-cap-start"><span class="msym">photo_camera</span>Скріншот початку зустрічі</button>
+      <button id="sh-cap-end"><span class="msym">photo_camera</span>Скріншот кінця зустрічі</button>
+      <button id="sh-refresh" class="secondary"><span class="msym">refresh</span>Оновити</button>
       <span class="toolbar-right"></span>
-      <button id="sh-del-start" class="danger btn-sm">🗑 Усі «початок»</button>
-      <button id="sh-del-end" class="danger btn-sm">🗑 Усі «кінець»</button>
-      <button id="sh-del-all" class="danger btn-sm">🗑 Очистити історію</button>
+      <button id="sh-del-start" class="danger btn-sm"><span class="msym sm">delete</span>Усі «початок»</button>
+      <button id="sh-del-end" class="danger btn-sm"><span class="msym sm">delete</span>Усі «кінець»</button>
+      <button id="sh-del-all" class="danger btn-sm"><span class="msym sm">delete</span>Очистити історію</button>
     </div>
-    <p class="muted" style="margin:-4px 0 14px;max-width:900px">Скрін робиться через headless Chrome проти живого рендеру (<span class="mono">/api/render</span>) — піксель-в-піксель, з аватарками й шрифтами. Зберігається в історію нижче; кожен можна завантажити PNG-ом.</p>
-    <div class="stat-grid" id="sh-stats" style="margin-bottom:16px"></div>
+    <div class="stat-grid compact" id="sh-stats" style="margin-bottom:16px"></div>
     <div class="shot-gallery" id="sh-gallery"></div>
-    <p class="muted" id="sh-empty" hidden>Скрінів ще немає. Натисни «📸 Скрін початку» або «Скрін кінця».</p>
   </section>
 
   <!-- ═══ НАЛАШТУВАННЯ ═══ -->
@@ -119,7 +99,7 @@
         <div class="field"><label for="s-start">Час початку</label><input id="s-start" placeholder="10:34 PM" readonly></div>
         <div class="field"><label for="s-end">Час кінця</label><input id="s-end" placeholder="11:15 PM" readonly></div>
         <div class="field"><label for="s-code">Код зустрічі</label>
-          <div class="input-with-btn"><input id="s-code" placeholder="yrt-kczi-csw"><button type="button" class="icon-btn" id="s-gen-code" title="Випадковий код">🎲</button></div>
+          <div class="input-with-btn"><input id="s-code" placeholder="yrt-kczi-csw"><button type="button" class="icon-btn" id="s-gen-code" title="Випадковий код"><span class="msym">casino</span></button></div>
         </div>
       </div>
     </div>
@@ -139,7 +119,7 @@
         <div class="field"><label for="s-tier">Тариф</label>
           <select id="s-tier"><option value="flex">Flex · 0.5×</option><option value="default">Default · 1×</option><option value="priority">Priority · 1.8×</option></select>
         </div>
-        <div class="field"><label>Баланс</label><div class="flex"><span class="value mono" id="s-balance">—</span><button type="button" class="iconbtn" id="s-balance-refresh">↻</button></div></div>
+        <div class="field"><label>Баланс</label><div class="flex"><span class="value mono" id="s-balance">—</span><button type="button" class="iconbtn" id="s-balance-refresh"><span class="msym">refresh</span></button></div></div>
       </div>
     </div>
   </section>
@@ -152,48 +132,13 @@
       <div class="toolbar" style="margin-top:12px">
         <button id="pr-save">Зберегти промт</button>
         <input id="pr-preset-name" placeholder="назва пресета" style="background:var(--surface-2);color:var(--text);border:1px solid transparent;padding:8px 10px;border-radius:6px;font-family:inherit">
-        <button id="pr-preset-save" class="secondary">💾 Зберегти як пресет</button>
+        <button id="pr-preset-save" class="secondary"><span class="msym">save</span>Зберегти як пресет</button>
       </div>
     </div>
     <div class="card">
       <h3>Збережені пресети</h3>
       <table class="data" id="pr-presets"><thead><tr><th>Назва</th><th>Оновлено</th><th style="width:180px">Дії</th></tr></thead><tbody></tbody></table>
       <p class="muted" id="pr-presets-empty" hidden>Пресетів ще немає.</p>
-    </div>
-  </section>
-
-  <!-- ═══ СИСТЕМА ═══ -->
-  <section class="panel" data-panel="system">
-    <div class="card">
-      <h3>Система <button id="sys-refresh" class="iconbtn" style="float:right">↻</button></h3>
-      <div class="kv" id="sys-info"></div>
-    </div>
-    <div class="card">
-      <h3>База даних</h3>
-      <div class="kv" id="db-info"></div>
-    </div>
-    <div class="card">
-      <h3>Резервні копії та перенесення</h3>
-      <p class="desc">Експорт — повний знімок (учасники з аватарками, налаштування, промт, пресети) без секретів. Імпорт приймає такий самий JSON.</p>
-      <div class="toolbar">
-        <a id="exp-download" href="/api/admin/export?download=1"><button class="secondary">⤓ Експорт JSON</button></a>
-        <button id="db-backup" class="secondary">⤓ Бекап data.db</button>
-        <button id="imp-btn" class="secondary">⤒ Імпорт JSON</button>
-        <input type="file" id="imp-file" accept="application/json,.json" hidden>
-      </div>
-    </div>
-    <div class="card danger-zone">
-      <h3>⚠ Небезпечна зона</h3>
-      <p class="desc">Незворотні операції. Спочатку зроби бекап.</p>
-      <div class="toolbar">
-        <button id="db-vacuum" class="secondary">🧹 VACUUM (стиснути БД)</button>
-        <button id="idx-restore" class="danger">♻ Відновити index.html з .bak</button>
-        <button id="db-reset" class="danger">💣 Скинути базу до дефолтів</button>
-      </div>
-    </div>
-    <div class="card">
-      <h3>Журнал активності <button id="act-refresh" class="iconbtn" style="float:right">↻</button></h3>
-      <div class="activity-log" id="activity-log"></div>
     </div>
   </section>
 </div>

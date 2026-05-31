@@ -124,6 +124,19 @@ function init_db(): void
             finished_at    TEXT
         )
     ");
+    // Лагідна міграція: вхідне (оригінальне) зображення, з якого генерували —
+    // зберігаємо знімок, щоб картка показувала «оригінал → результат», а
+    // перегенерація йшла з того самого оригіналу (а не з уже заміненого аватара).
+    $gcols = [];
+    foreach (all($con, 'PRAGMA table_info(generations)') as $r) {
+        $gcols[$r['name']] = true;
+    }
+    if (!isset($gcols['input_image'])) {
+        $con->exec('ALTER TABLE generations ADD COLUMN input_image BLOB');
+    }
+    if (!isset($gcols['input_mime'])) {
+        $con->exec('ALTER TABLE generations ADD COLUMN input_mime TEXT');
+    }
     $con->exec("
         CREATE TABLE IF NOT EXISTS prompt_presets (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,

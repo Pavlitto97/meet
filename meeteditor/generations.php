@@ -12,7 +12,7 @@ function run_generation(int $genId): void
 {
     try {
         $con = db();
-        $row = one($con, 'SELECT id, participant_id, prompt, model, provider, service_tier FROM generations WHERE id = ?', [$genId]);
+        $row = one($con, 'SELECT id, participant_id, prompt, model, provider, service_tier, input_image, input_mime FROM generations WHERE id = ?', [$genId]);
         if (!$row) {
             return;
         }
@@ -20,7 +20,13 @@ function run_generation(int $genId): void
         if ($apiKey === '') {
             throw new \RuntimeException('OpenRouter API key не задано. Введи його у налаштуваннях.');
         }
-        $inputUrl = $row['participant_id'] ? avatar_data_url($row['participant_id']) : null;
+        // Беремо заморожений знімок вхідного фото (input_image). Старі рядки без
+        // знімка — фолбек на поточний аватар учасника.
+        if (($row['input_image'] ?? null) !== null && !empty($row['input_mime'])) {
+            $inputUrl = blob_to_data_url($row['input_mime'], $row['input_image']);
+        } else {
+            $inputUrl = $row['participant_id'] ? avatar_data_url($row['participant_id']) : null;
+        }
         // Gemini деколи відповідає 200 OK без image — це транзієнтно, повторюємо до 3 разів.
         $maxAttempts = 3;
         $lastErr = null;
@@ -94,10 +100,25 @@ function create_generation(array $body): array
     $model = ($body['model'] ?? '') ?: ($s['gen_model'] ?? '') ?: DEFAULT_GEN_MODEL;
     $provider = ($body['provider'] ?? '') ?: ($s['gen_provider'] ?? '') ?: DEFAULT_GEN_PROVIDER;
     $tier = ($body['service_tier'] ?? '') ?: ($s['gen_tier'] ?? '') ?: DEFAULT_GEN_TIER;
+    // Заморожуємо вхідне (оригінальне) фото на момент постановки в чергу — щоб
+    // показувати «оригінал → результат» і перегенерувати з того самого оригіналу.
+    $inBlob = null;
+    $inMime = null;
+    if ($pid) {
+        $inputUrl = avatar_data_url($pid);
+        if ($inputUrl) {
+            try {
+                [$inMime, $inBlob] = parse_data_url($inputUrl);
+            } catch (\Throwable $e) {
+                $inBlob = null;
+                $inMime = null;
+            }
+        }
+    }
     $con = db();
     q($con,
-        'INSERT INTO generations(participant_id, prompt, model, provider, service_tier) VALUES(?,?,?,?,?)',
-        [$pid, $prompt, $model, $provider, $tier]
+        'INSERT INTO generations(participant_id, prompt, model, provider, service_tier, input_image, input_mime) VALUES(?,?,?,?,?,?,?)',
+        [$pid, $prompt, $model, $provider, $tier, $inBlob, $inMime]
     );
     $genId = (int) $con->lastInsertId();
     log_activity('generation.start', "#$genId pid=$pid");
@@ -110,6 +131,7 @@ function list_generations(?string $participant = null, ?string $status = null): 
     $sql =
         "SELECT g.id, g.participant_id, g.prompt, g.model, g.provider, g.service_tier, "
         . "g.status, g.error, g.image IS NOT NULL AS has_image, g.image_mime, "
+        . "g.input_image IS NOT NULL AS has_input, "
         . "g.cost_usd, g.prompt_tokens, g.output_tokens, g.created_at, g.finished_at, "
         . "COALESCE(p.custom_name, p.original_name) AS participant_name "
         . "FROM generations g LEFT JOIN participants p ON p.device_id = g.participant_id WHERE 1=1";
@@ -134,6 +156,16 @@ function generation_image(int $gid): ?array
         return null;
     }
     return [$row['image'], $row['image_mime']];
+}
+
+/** Вхідне (оригінальне) зображення генерації [blob, mime] або null. */
+function generation_input(int $gid): ?array
+{
+    $row = one(db(), 'SELECT input_image, input_mime FROM generations WHERE id = ?', [$gid]);
+    if (!$row || ($row['input_image'] ?? null) === null) {
+        return null;
+    }
+    return [$row['input_image'], $row['input_mime'] ?: 'image/jpeg'];
 }
 
 /** Приймає готову генерацію як аватар учасника (which = start|end), видаляє рядок генерації. */
@@ -180,13 +212,14 @@ function approve_generation(int $gid, string $which = 'start'): array
 function regenerate(int $gid): array
 {
     $con = db();
-    $row = one($con, 'SELECT participant_id, prompt, model, provider, service_tier FROM generations WHERE id = ?', [$gid]);
+    $row = one($con, 'SELECT participant_id, prompt, model, provider, service_tier, input_image, input_mime FROM generations WHERE id = ?', [$gid]);
     if (!$row) {
         return ['error' => 'not found', '_status' => 404];
     }
+    // Переносимо той самий заморожений оригінал → перегенерація на його основі.
     q($con,
-        'INSERT INTO generations(participant_id, prompt, model, provider, service_tier) VALUES(?,?,?,?,?)',
-        [$row['participant_id'], $row['prompt'], $row['model'], $row['provider'], $row['service_tier']]
+        'INSERT INTO generations(participant_id, prompt, model, provider, service_tier, input_image, input_mime) VALUES(?,?,?,?,?,?,?)',
+        [$row['participant_id'], $row['prompt'], $row['model'], $row['provider'], $row['service_tier'], $row['input_image'], $row['input_mime']]
     );
     $newId = (int) $con->lastInsertId();
     log_activity('generation.regenerate', "#$gid → #$newId");
