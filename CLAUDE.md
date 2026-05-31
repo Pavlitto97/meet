@@ -15,6 +15,8 @@ index.html                    ← Збережена сторінка Meet (~2.8
 index.html.bak                ← Бекап оригіналу (повторюй із .bak якщо щось зламав)
 editor.html                   ← Веб-редактор (UI), бере дані через REST
 admin.html                    ← Адмін-панель (вкладки: огляд/учасники/генерації/...)
+degrade-lab.html              ← Лабораторія webcam-деградації: перемикання підходів, повзунок
+                                сили, порівняння «оригінал↔результат», живий рендер+скрін
 server.php                    ← Точка входу: `php server.php [--port N]` → піднімає php -S
 router.php                    ← Front controller для вбудованого сервера (php -S … router.php)
 meeteditor/                   ← Бекенд-пакет (namespace Meet; лише стандартний PHP)
@@ -28,6 +30,8 @@ meeteditor/                   ← Бекенд-пакет (namespace Meet; ли�
   generations.php             ← Черга AI-генерацій, апрув, регенерація, bulk-delete
   gen_worker.php              ← CLI-воркер фонової генерації (детачнутий процес)
   screenshots.php             ← Скріни рендеру через headless Chrome (proc_open) + історія
+  degrade.php                 ← «Webcam-деградація» аватарок: підходи none/gd/gd-jpeg/css.
+                                webcamize() (GD-конвеєр у JPEG) + cam_spec() (CSS-фільтр)
   render.php                  ← render_meet() — генерація Meet HTML
   admin.php                   ← Агрегати адмінки: stats/system/db/export/import/presets
   http.php                    ← Request/Response, роутер (метод+regex), serve_file
@@ -41,6 +45,7 @@ assets/                       ← Локалізовані шрифти/ікон
   js/api.js                   ← Спільні JS-утиліти (api(), splitCollage, тости…)
   js/editor.js                ← Логіка редактора
   js/admin.js                 ← Логіка адмін-панелі
+  js/degrade-lab.js           ← Логіка лабораторії деградації (degrade-lab.html)
   fonts/                      ← woff/woff2 (Roboto, Google Sans, Google Symbols)
   fonts/admin/                ← Roboto 400/500/700 (latin+cyrillic) для admin.css (офлайн)
   img/                        ← placeholder.svg + іконки Meet + emoji/
@@ -91,15 +96,29 @@ admin/screenshots → http → routes` (див. `bootstrap.php`).
 | `/api/participants/<device_id>`        | PUT     | Оновити `custom_name`/`original_name`/`skipped`/`position`/`avatar(_end)_data_url`.|
 | `/api/participants/<device_id>`        | DELETE  | Скинути правки; `?hard=1` — видалити рядок (лише для `user_added`).               |
 | `/api/avatar/<device_id>?which=`       | GET     | Бінарний аватар (`start`\|`end`).                                                 |
-| `/api/settings`                        | GET/PUT | `start_time/period`, `end_time/period`, `meeting_code`, `gen_*`, `openrouter_api_key` (секрет).|
+| `/api/settings`                        | GET/PUT | `start_time/period`, `end_time/period`, `meeting_code`, `gen_*`, `cam_method`, `cam_intensity`, `openrouter_api_key` (секрет).|
 | `/api/prompt`                          | GET/PUT | Текст `promt.md`.                                                                 |
-| `/api/render?which=&download=`         | GET     | Згенерований Meet HTML (`start`\|`end`). `?download=1` → attachment.              |
+| `/api/render?which=&download=&cam=`    | GET     | Згенерований Meet HTML (`start`\|`end`). `?download=1` → attachment. `?cam=<метод>:<сила>` — webcam-деградація (без cam — байт-у-байт).|
 | `/api/credits`                         | GET     | Баланс OpenRouter.                                                                |
 | `/api/generate`                        | POST    | Поставити AI-генерацію у чергу (детачнутий `gen_worker.php`).                     |
 | `/api/generations?participant_id=&status=` | GET | Список генерацій (+ім'я учасника, `has_image`).                                  |
 | `/api/generation-image/<id>`           | GET     | Бінарне зображення генерації.                                                     |
 | `/api/generations/<id>/approve`        | POST    | `{which:start\|end}` — прийняти цілу картинку як аватар.                          |
 | `/api/generations/<id>`                | DELETE  | Видалити генерацію.                                                               |
+
+**Webcam-деградація (лабораторія підходів):**
+
+| Маршрут                                | Метод   | Опис                                                                              |
+| -------------------------------------- | ------- | --------------------------------------------------------------------------------- |
+| `/api/degrade-methods`                 | GET     | Перелік підходів `{key,label,layer,desc}` (none/gd/gd-jpeg/css).                 |
+| `/api/degrade-spec?cam=`               | GET     | Браузерний спек фільтра `{filter, svg}` для css (PHP — джерело правди).           |
+| `/api/degrade-preview?did=&gid=&which=&cam=` | GET | Прев'ю однієї аватарки крізь підхід: server-методи бейкнуті, browser — оригінал. |
+
+`cam` = `<метод>:<сила>` (сила 0..100 або 0..1). Метод `none` або без `cam` →
+вивід недоторканий. Server-методи (`gd`, `gd-jpeg`) бейкають JPEG у байти аватарки;
+browser-метод (`css`) інжектить фільтр у `<head>` рендеру (потрапляє у скрін,
+байти не міняє). `POST /api/screenshots` приймає `{cam}` (інакше бере дефолт
+`cam_method`/`cam_intensity` із settings).
 
 **Адмінка:**
 
@@ -124,7 +143,7 @@ admin/screenshots → http → routes` (див. `bootstrap.php`).
 
 | Маршрут                                | Метод   | Опис                                                                              |
 | -------------------------------------- | ------- | --------------------------------------------------------------------------------- |
-| `/api/screenshots`                     | POST    | Зробити скрін рендеру: `{which:start\|end, width, height, label}` → запис у БД.    |
+| `/api/screenshots`                     | POST    | Зробити скрін рендеру: `{which:start\|end, width, height, label, cam}` → запис у БД (`cam` опц., інакше дефолт із settings). |
 | `/api/screenshots?which=`              | GET     | Історія скрінів (без байтів — `has_image`, розмір, код зустрічі, мітка).          |
 | `/api/screenshot-image/<id>?download=` | GET     | Бінарний PNG; `?download=1` → attachment.                                         |
 | `/api/screenshots/bulk-delete`         | POST    | `{scope:start\|end\|all}`.                                                        |
@@ -155,7 +174,8 @@ participants (
 
 settings (
   key   TEXT PRIMARY KEY,             -- 'start_time'|'start_period'|'end_time'|'end_period'|
-  value TEXT                          --   'meeting_code'|'gen_model'|'gen_provider'|'gen_tier'|'openrouter_api_key'
+  value TEXT                          --   'meeting_code'|'gen_model'|'gen_provider'|'gen_tier'|
+                                      --   'cam_method'|'cam_intensity'|'openrouter_api_key'
 )
 
 generations (id, participant_id, prompt, model, provider, service_tier,
@@ -256,6 +276,30 @@ daemon-потоку Python). Воркер `run_generation()`:
 Кілька процесів пишуть у той самий `data.db` — `PRAGMA busy_timeout=5000` на
 кожному підключенні гасить «database is locked».
 
+## Webcam-деградація (`meeteditor/degrade.php`)
+
+Робить аватарку схожою на кадр з поганої вебки. Підходи **двох рівнів**:
+
+- **server** (`gd`, `gd-jpeg`) — піксельний конвеєр через GD у `webcamize()`, бейкає
+  результат у JPEG-байти. `gd` = downscale→колір/AWB→blur→шум(оверлей-шар, НЕ
+  per-pixel loop)→багатопрохідний low-q JPEG; `gd-jpeg` = лише downscale+JPEG
+  (чистий «поганий бітрейт»). Тільки `imagejpeg(low-q)` дає **справжні** 8×8 DCT-блоки.
+  Застосовується у `render_meet()` до байтів **перед** base64-data:URL (а також у
+  `/api/degrade-preview`). GD-нюанси: `IMG_FILTER_CONTRAST` інвертований (позитив =
+  менше контрасту); `GAUSSIAN_BLUR` без радіуса (сила через повтор); `imagejpeg` без
+  керованого 4:2:0. Imagick/AVIF недоступні — вихід лише JPEG.
+- **browser** (`css`) — `cam_spec()` віддає CSS-фільтр (blur/contrast/brightness/
+  saturate/sepia/hue). `cam_head_markup()` інжектить `<style>` у `<head>` рендеру для
+  `.oZRSLe img.m0DVAf[src^="data:"]`. Фільтр накладає браузер → потрапляє у скрін
+  (Chrome знімає живий URL), байти аватарки не міняються (реверсивно). CSS не вміє
+  шуму/блокінгу — для них є server-методи. (`cam_spec()` лишає поле `svg` для сумісності
+  API; зараз завжди порожнє.)
+
+Гейт `?cam=<метод>:<сила>`: без `cam` (або `none`) рендер **байт-у-байт** — як `?fit`.
+Дефолт для скрінів — settings `cam_method`/`cam_intensity` (лаба зберігає кнопкою).
+Лабораторія `degrade-lab.html` дозволяє перемикати підходи й силу наживо, порівнювати
+«оригінал↔результат», бачити всі методи поруч і знімати скрін будь-яким підходом.
+
 ## Особливості Meet HTML
 
 - Один рядок ~2.8 MB, читати **тільки** через `Read` з `limit`/`offset` або
@@ -297,6 +341,9 @@ daemon-потоку Python). Воркер `run_generation()`:
 - Підтримка «3 others» — якщо знадобиться розгорнути групу і дати кожному фото.
 - Інтернаціоналізація — зараз тексти UI тільки українські.
 - Drag-and-drop reorder (зараз — стрілки ↑↓ в адмінці).
+- Webcam-деградація: per-participant сила (колонка `degrade_override`) і опційний
+  бейк GD-результату на `approve_generation()` (зараз — лише на льоту в рендері/прев'ю;
+  `generations.image` завжди лишається чистим оригіналом).
 
 ## Конвенції
 

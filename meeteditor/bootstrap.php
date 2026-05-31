@@ -25,5 +25,6 @@ require_once __DIR__ . '/openrouter.php';
 require_once __DIR__ . '/generations.php';
 require_once __DIR__ . '/render.php';
 require_once __DIR__ . '/screenshots.php';
+require_once __DIR__ . '/degrade.php';
 require_once __DIR__ . '/admin.php';
 require_once __DIR__ . '/routes.php';

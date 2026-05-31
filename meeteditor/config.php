@@ -84,6 +84,10 @@ const DEFAULT_SETTINGS = [
     'gen_model'          => DEFAULT_GEN_MODEL,
     'gen_provider'       => DEFAULT_GEN_PROVIDER,
     'gen_tier'           => DEFAULT_GEN_TIER,
+    // Webcam-деградація аватарок (лабораторія підходів). 'none' = вимкнено →
+    // дефолтний /api/render лишається байт-у-байт. Метод: none|gd|gd-jpeg|css|svg.
+    'cam_method'         => 'none',
+    'cam_intensity'      => '35',     // 0..100, застосовується лише коли method != none
 ];
 
 // Секретні поля — назовні віддаємо лише факт «встановлено/ні».

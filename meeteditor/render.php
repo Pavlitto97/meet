@@ -10,12 +10,17 @@ namespace Meet;
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/settings.php';
+require_once __DIR__ . '/degrade.php';
 
-function render_meet(string $which = 'start', ?string $fit = null): string
+function render_meet(string $which = 'start', ?string $fit = null, ?string $cam = null): string
 {
     if ($which !== 'start' && $which !== 'end') {
         $which = 'start';
     }
+    // ?cam=<метод>:<сила> — «webcam-деградація» аватарок (опційно). Без cam — недоторкано.
+    $camP = parse_cam($cam);
+    $camMethod = $camP['method'];
+    $camI = $camP['intensity'];
     $html = (string) \file_get_contents(MEET_HTML);
 
     // Позиції всіх data-participant-id у файлі (байтові офсети).
@@ -56,6 +61,10 @@ function render_meet(string $which = 'start', ?string $fit = null): string
             $mime = $row['avatar_mime'] ?? null;
         }
         if ($blob !== null && $blob !== '' && !empty($mime)) {
+            // Серверні методи (gd/gd-jpeg) бейкають деградацію прямо в байти аватарки.
+            if ($camI > 0 && cam_is_server($camMethod)) {
+                [$blob, $mime] = degrade_blob($blob, $mime, $camMethod, $camI);
+            }
             $dataUrl = 'data:' . $mime . ';base64,' . \base64_encode($blob);
             \preg_match_all('#<img\b[^>]*?\ssrc="([^"]*)"#', $tile, $im, PREG_OFFSET_CAPTURE);
             foreach ($im[1] as $cap) {
@@ -138,6 +147,10 @@ function render_meet(string $which = 'start', ?string $fit = null): string
         . 'display:block!important;clip-path:none!important;z-index:5!important;}'
         . '.oZRSLe:has(img.m0DVAf[src^="data:"]) img.SOQwsf{display:none!important;}'
         . '</style>';
+
+    // Браузерні методи деградації (css/svg): фільтр накладає сам браузер при рендері —
+    // і він потрапляє у скрін (Chrome знімає живий /api/render). Байти аватарки незмінні.
+    $headInject .= cam_head_markup($camMethod, $camI);
 
     // Скрін-режим (?fit=ШИРИНАxВИСОТА): уся сторінка Meet живе в контейнері
     // #yDmH0d з ЖОРСТКО зашитим розміром (напр. 1728×996 — логічний розмір вікна

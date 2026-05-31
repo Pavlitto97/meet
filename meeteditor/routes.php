@@ -14,6 +14,7 @@ require_once __DIR__ . '/render.php';
 require_once __DIR__ . '/openrouter.php';
 require_once __DIR__ . '/generations.php';
 require_once __DIR__ . '/screenshots.php';
+require_once __DIR__ . '/degrade.php';
 require_once __DIR__ . '/admin.php';
 
 function req_did(Request $req): string
@@ -60,12 +61,48 @@ route('GET', '/api/render', function (Request $r) {
     // ?fit=ШИРИНАxВИСОТА (опційно) — масштабувати рендер під вікно скріна, щоб не
     // було білих полос. Без fit — байт-у-байт ідентичний дефолтний вивід.
     $fit = $r->q('fit');
-    $html = render_meet($which, $fit !== '' ? $fit : null);
+    // ?cam=<метод>:<сила> — webcam-деградація аватарок (опційно; без cam — недоторкано).
+    $cam = $r->q('cam');
+    $html = render_meet($which, $fit !== '' ? $fit : null, $cam !== '' ? $cam : null);
     $headers = [];
     if ($r->q('download')) {
         $headers['Content-Disposition'] = 'attachment; filename="meet-' . $which . '.html"';
     }
     return new Response(200, $html, 'text/html; charset=utf-8', $headers);
+});
+
+// ─── Webcam-деградація (лабораторія підходів) ───────────────────────────────────
+route('GET', '/api/degrade-methods', fn(Request $r) => ['methods' => degrade_methods()]);
+// Браузерний спек фільтра для css/svg (PHP — єдине джерело правди для UI й рендера).
+route('GET', '/api/degrade-spec', function (Request $r) {
+    $p = parse_cam($r->q('cam'));
+    $spec = cam_spec($p['method'], $p['intensity']);
+    return [
+        'method'    => $p['method'],
+        'intensity' => $p['intensity'],
+        'layer'     => cam_layer($p['method']),
+        'filter'    => $spec['filter'],
+        'svg'       => $spec['svg'],
+    ];
+});
+// Прев'ю однієї аватарки крізь обраний підхід. Серверні методи — бейкнуті байти;
+// браузерні (css/svg) — повертає оригінал (фільтр накладе сторінка лабораторії).
+route('GET', '/api/degrade-preview', function (Request $r) {
+    $which = $r->q('which', 'start');
+    $gid = $r->q('gid');
+    if ($gid !== null && $gid !== '') {
+        $res = generation_image((int) $gid);
+    } else {
+        $did = $r->q('did');
+        $res = ($did !== null && $did !== '') ? avatar_blob(\rawurldecode($did), $which) : null;
+    }
+    if (!$res) {
+        return Response::text('no image', 404);
+    }
+    [$blob, $mime] = $res;
+    $p = parse_cam($r->q('cam'));
+    [$blob, $mime] = degrade_blob($blob, $mime, $p['method'], $p['intensity']);
+    return new Response(200, $blob, $mime, ['Cache-Control' => 'no-store']);
 });
 
 // ─── OpenRouter ───────────────────────────────────────────────────────────────
@@ -110,7 +147,7 @@ route('DELETE', '/api/generations/(?P<gid>\d+)', fn(Request $r) => delete_genera
 // ─── Скріни (headless Chrome) ───────────────────────────────────────────────────
 route('POST', '/api/screenshots', function (Request $r) {
     $b = $r->json();
-    return capture($b['which'] ?? 'start', $b['width'] ?? 1280, $b['height'] ?? 720, $b['label'] ?? null);
+    return capture($b['which'] ?? 'start', $b['width'] ?? 1280, $b['height'] ?? 720, $b['label'] ?? null, $b['cam'] ?? null);
 });
 route('GET', '/api/screenshots', fn(Request $r) => list_screenshots($r->q('which')));
 route('GET', '/api/screenshot-image/(?P<sid>\d+)', function (Request $r) {

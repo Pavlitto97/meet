@@ -194,7 +194,7 @@ function run_chrome(string $chrome, string $url, int $width, int $height): array
 }
 
 /** Робить скрін рендеру (start|end) і складає у таблицю screenshots. */
-function capture(string $which = 'start', $width = 1280, $height = 720, ?string $label = null): array
+function capture(string $which = 'start', $width = 1280, $height = 720, ?string $label = null, ?string $cam = null): array
 {
     $which = $which === 'end' ? 'end' : 'start';
     if (!\is_numeric($width) || !\is_numeric($height)) {
@@ -212,10 +212,23 @@ function capture(string $which = 'start', $width = 1280, $height = 720, ?string 
         return ['error' => 'порт сервера невідомий — не можу відкрити /api/render', '_status' => 500];
     }
 
+    // cam=<метод>:<сила> — webcam-деградація. Явний аргумент має перевагу; інакше
+    // беремо збережений дефолт (cam_method/cam_intensity) з налаштувань.
+    if ($cam === null || $cam === '') {
+        $m = get_setting('cam_method');
+        if ($m !== '' && $m !== 'none') {
+            $i = get_setting('cam_intensity');
+            $cam = $m . ':' . ($i !== '' ? $i : '35');
+        }
+    }
+
     // fit=ШИРИНАxВИСОТА — рендер масштабує контейнер Meet під розмір вікна скріна,
     // щоб не було білих полос (сторінка має жорстко зашитий рідний розмір).
     $url = 'http://' . HOST . ':' . $port . '/api/render?which=' . $which
         . '&fit=' . $width . 'x' . $height;
+    if ($cam !== null && $cam !== '' && $cam !== 'none') {
+        $url .= '&cam=' . \rawurlencode($cam);
+    }
     [$png, $err] = run_chrome($chrome, $url, $width, $height);
     if (!$png) {
         $msg = 'Chrome не зробив скрін за відведений час';
