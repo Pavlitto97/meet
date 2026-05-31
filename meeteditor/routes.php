@@ -57,7 +57,10 @@ route('GET', '/api/avatar/(?P<did>.+)', function (Request $r) {
 // ─── Рендер ───────────────────────────────────────────────────────────────────
 route('GET', '/api/render', function (Request $r) {
     $which = $r->q('which', 'start');
-    $html = render_meet($which);
+    // ?fit=ШИРИНАxВИСОТА (опційно) — масштабувати рендер під вікно скріна, щоб не
+    // було білих полос. Без fit — байт-у-байт ідентичний дефолтний вивід.
+    $fit = $r->q('fit');
+    $html = render_meet($which, $fit !== '' ? $fit : null);
     $headers = [];
     if ($r->q('download')) {
         $headers['Content-Disposition'] = 'attachment; filename="meet-' . $which . '.html"';

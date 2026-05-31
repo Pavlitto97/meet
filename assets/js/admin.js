@@ -225,7 +225,7 @@ function genStatsRow(list) {
 
 function genCard(g) {
   const isErr = g.status === "error";
-  const isEmptyImage = isErr && /image_url/.test(g.error || "");
+  const isEmptyImage = isErr && /image_url|не повернула зображення/.test(g.error || "");
   const badge = g.status === "done" ? `<span class="badge done">готово</span>`
     : isEmptyImage ? `<span class="badge pending">порожньо — повтори</span>`
     : isErr ? `<span class="badge err">помилка</span>`
@@ -372,12 +372,10 @@ let shotCapturing = false;
 function shotStatsRow(list) {
   const start = list.filter(s => s.which !== "end").length;
   const end = list.filter(s => s.which === "end").length;
-  const bytes = list.reduce((a, s) => a + (Number(s.size_bytes) || 0), 0);
   return [
     statCard("Усього", list.length, "", "accent"),
     statCard("Початок", start, "", "ok"),
     statCard("Кінець", end),
-    statCard("Обсяг", fmtBytes(bytes)),
   ].join("");
 }
 

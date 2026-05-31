@@ -11,7 +11,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/settings.php';
 
-function render_meet(string $which = 'start'): string
+function render_meet(string $which = 'start', ?string $fit = null): string
 {
     if ($which !== 'start' && $which !== 'end') {
         $which = 'start';
@@ -138,6 +138,35 @@ function render_meet(string $which = 'start'): string
         . 'display:block!important;clip-path:none!important;z-index:5!important;}'
         . '.oZRSLe:has(img.m0DVAf[src^="data:"]) img.SOQwsf{display:none!important;}'
         . '</style>';
+
+    // Скрін-режим (?fit=ШИРИНАxВИСОТА): уся сторінка Meet живе в контейнері
+    // #yDmH0d з ЖОРСТКО зашитим розміром (напр. 1728×996 — логічний розмір вікна
+    // на момент збереження). Якщо headless Chrome знімає у більшому вікні (Full HD),
+    // решта — білий фон <body>, який «вилазить» праворуч/знизу. Тут масштабуємо
+    // #yDmH0d так, щоб він точно заповнив запитане вікно (без білих полос).
+    // Робиться ЛИШЕ коли явно передано fit — дефолтний /api/render лишається
+    // байт-у-байт ідентичним.
+    if ($fit !== null && \preg_match('#^(\d+)x(\d+)$#', $fit, $fm)) {
+        $fitW = (int) $fm[1];
+        $fitH = (int) $fm[2];
+        // Рідний розмір контейнера зі збереженого HTML (фолбек — 1728×996).
+        $natW = 1728;
+        $natH = 996;
+        if (\preg_match('#id="yDmH0d"[^>]*style="[^"]*\bwidth:\s*(\d+)px;\s*height:\s*(\d+)px#', $html, $nm)) {
+            $natW = (int) $nm[1];
+            $natH = (int) $nm[2];
+        }
+        if ($fitW > 0 && $fitH > 0 && $natW > 0 && $natH > 0) {
+            $sx = $fitW / $natW;
+            $sy = $fitH / $natH;
+            $headInject .= '<style>'
+                . 'html,body{margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important;}'
+                . '#yDmH0d{transform:scale(' . \sprintf('%.6f', $sx) . ',' . \sprintf('%.6f', $sy) . ')!important;'
+                . 'transform-origin:top left!important;}'
+                . '</style>';
+        }
+    }
+
     $needle = '<head>';
     $p = \strpos($html, $needle);
     if ($p !== false) {

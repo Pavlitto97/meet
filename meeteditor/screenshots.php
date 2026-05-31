@@ -212,7 +212,10 @@ function capture(string $which = 'start', $width = 1280, $height = 720, ?string 
         return ['error' => 'порт сервера невідомий — не можу відкрити /api/render', '_status' => 500];
     }
 
-    $url = 'http://' . HOST . ':' . $port . '/api/render?which=' . $which;
+    // fit=ШИРИНАxВИСОТА — рендер масштабує контейнер Meet під розмір вікна скріна,
+    // щоб не було білих полос (сторінка має жорстко зашитий рідний розмір).
+    $url = 'http://' . HOST . ':' . $port . '/api/render?which=' . $which
+        . '&fit=' . $width . 'x' . $height;
     [$png, $err] = run_chrome($chrome, $url, $width, $height);
     if (!$png) {
         $msg = 'Chrome не зробив скрін за відведений час';

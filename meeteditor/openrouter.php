@@ -22,6 +22,37 @@ class OpenRouterHttpError extends \RuntimeException
     }
 }
 
+/**
+ * Модель відповіла 200 OK, але без зображення (лише текст/відмова).
+ * Несе текст відповіді й finish_reason, щоб помилка пояснювала ПРИЧИНУ
+ * (часто Gemini відмовляє редагувати фото реальних людей). $retryable=false
+ * для жорстких блоків (content_filter/refusal) — ретраї там не допоможуть.
+ */
+class EmptyImageError extends \RuntimeException
+{
+    public ?string $modelText;
+    public ?string $finishReason;
+    public bool $retryable;
+
+    public function __construct(?string $modelText, ?string $finishReason, bool $retryable)
+    {
+        $this->modelText = ($modelText !== null && \trim($modelText) !== '') ? \trim($modelText) : null;
+        $this->finishReason = $finishReason;
+        $this->retryable = $retryable;
+        // Фраза «не повернула зображення» — стабільний маркер для UI (бейдж «порожньо»).
+        $msg = 'OpenRouter: модель не повернула зображення';
+        if ($this->finishReason) {
+            $msg .= " (finish_reason={$this->finishReason})";
+        }
+        if ($this->modelText !== null) {
+            $msg .= '. Відповідь моделі: «' . \mb_substr($this->modelText, 0, 300) . '»';
+        } else {
+            $msg .= ' і без тексту — імовірно транзієнтний збій, спробуй ще раз.';
+        }
+        parent::__construct($msg);
+    }
+}
+
 function or_headers(string $apiKey): array
 {
     return [
@@ -136,5 +167,32 @@ function extract_image(array $resp): array
             }
         }
     }
-    throw new \RuntimeException('OpenRouter: у відповіді немає image_url у data:base64 форматі');
+    // Зображення немає. Витягуємо текст/відмову й finish_reason, щоб помилка
+    // пояснювала причину. content_filter або поле refusal — жорсткий блок (ретрай
+    // не допоможе); інакше вважаємо транзієнтним і дозволяємо ретрай.
+    $finish = $choices[0]['finish_reason'] ?? null;
+    $hardBlock = !empty($msg['refusal']) || $finish === 'content_filter';
+    throw new EmptyImageError(extract_text($msg), $finish, !$hardBlock);
+}
+
+/** Текст відповіді моделі (refusal / рядковий content / text-частини) або null. */
+function extract_text(array $msg): ?string
+{
+    if (!empty($msg['refusal']) && \is_string($msg['refusal'])) {
+        return $msg['refusal'];
+    }
+    $content = $msg['content'] ?? null;
+    if (\is_string($content)) {
+        return $content;
+    }
+    if (\is_array($content)) {
+        $texts = [];
+        foreach ($content as $part) {
+            if (\is_array($part) && ($part['type'] ?? null) === 'text' && !empty($part['text'])) {
+                $texts[] = $part['text'];
+            }
+        }
+        return $texts ? \implode(' ', $texts) : null;
+    }
+    return null;
 }

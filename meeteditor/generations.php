@@ -27,8 +27,11 @@ function run_generation(int $genId): void
         } else {
             $inputUrl = $row['participant_id'] ? avatar_data_url($row['participant_id']) : null;
         }
-        // Gemini деколи відповідає 200 OK без image — це транзієнтно, повторюємо до 3 разів.
-        $maxAttempts = 3;
+        // Gemini деколи відповідає 200 OK без image — транзієнтно, повторюємо з
+        // невеликою паузою. Жорсткі блоки (content_filter/refusal) не ретраїмо —
+        // вони не виправляться, краще одразу показати причину. HTTP-помилки теж
+        // пролітають назовні (не EmptyImageError).
+        $maxAttempts = 5;
         $lastErr = null;
         $mime = null;
         $blob = null;
@@ -40,13 +43,15 @@ function run_generation(int $genId): void
                 $usage = $resp['usage'] ?? [];
                 $lastErr = null;
                 break;
-            } catch (\RuntimeException $e) {
+            } catch (EmptyImageError $e) {
                 $lastErr = $e;
-                // Ретраїмо лише empty-image випадки. HTTP-помилки самі не виправляться.
-                if (\strpos($e->getMessage(), 'image_url') === false) {
-                    throw $e;
+                if (!$e->retryable) {
+                    throw $e; // жорстка відмова моделі — ретраї не допоможуть
                 }
                 \fwrite(\STDERR, "[gen #$genId] empty image, retry " . ($attempt + 1) . "/$maxAttempts\n");
+                if ($attempt < $maxAttempts - 1) {
+                    \usleep(1500000); // 1.5с бекоф перед наступною спробою
+                }
             }
         }
         if ($lastErr && $blob === null) {

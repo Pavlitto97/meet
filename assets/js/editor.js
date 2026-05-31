@@ -372,7 +372,7 @@ function queueCard(g) {
   ].filter(Boolean).join(" · ");
   const img = g.has_image ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">` : "";
   const isErr = g.status === "error";
-  const isEmptyImage = isErr && /image_url/.test(g.error || "");
+  const isEmptyImage = isErr && /image_url|не повернула зображення/.test(g.error || "");
   const tag = isEmptyImage
     ? `<span class="user-tag">обробка</span>`
     : isErr ? `<span class="skip-tag">помилка</span>` : `<span class="user-tag">готово</span>`;
