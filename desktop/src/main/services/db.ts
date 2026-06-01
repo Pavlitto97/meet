@@ -3,8 +3,9 @@
  * збірки. Схема ідентична PHP-версії (той самий data.db читається без змін).
  * Один main-процес ⇒ одне підключення; gen-worker (utilityProcess) візьме власне.
  */
+import fs from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
-import { dbPath } from './paths';
+import { dbPath, promptFile, promptSeedPath } from './paths';
 import { DEFAULT_SETTINGS, defaultParticipants } from './config';
 
 let _db: DatabaseSync | null = null;
@@ -156,6 +157,15 @@ export function initDb(): void {
   // Дефолтні налаштування.
   for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
     run('INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)', [k, v]);
+  }
+
+  // Сідимо promt.md із бандла у userData при першому запуску (інакше промт порожній).
+  try {
+    if (!fs.existsSync(promptFile()) && fs.existsSync(promptSeedPath())) {
+      fs.copyFileSync(promptSeedPath(), promptFile());
+    }
+  } catch {
+    /* промт не критичний для старту */
   }
 
   // OPENROUTER_API_KEY з оточення (.env через dotenv пріоритетніший за DB).

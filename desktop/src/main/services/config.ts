@@ -34,7 +34,7 @@ export const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 export const OPENROUTER_CREDITS_URL = 'https://openrouter.ai/api/v1/credits';
 export const DEFAULT_GEN_MODEL = 'google/gemini-2.5-flash-image';
 export const DEFAULT_GEN_PROVIDER = 'google-ai-studio';
-export const DEFAULT_GEN_TIER = 'default';
+export const DEFAULT_GEN_TIER = 'flex';
 
 // ─── Початкові значення у HTML (що саме шукати для заміни) ─────────────────────────
 export const ORIGINAL_MEETING_CODE = 'yrt-kczi-csw';
