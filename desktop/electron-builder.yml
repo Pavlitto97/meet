@@ -1,0 +1,56 @@
+appId: com.futurra.meeteditor
+productName: Meet Editor
+copyright: © Futurra Group
+
+directories:
+  output: dist
+  buildResources: build
+
+# Renderer (vanilla HTML/JS) is shipped as-is; main/preload are compiled to out/.
+files:
+  - out/**/*
+  - renderer/**/*
+  - package.json
+
+# The 2.9MB source Meet page + its .bak ship read-only outside the asar,
+# read into memory by render.ts. User data/DB live in app.getPath('userData').
+extraResources:
+  - from: resources
+    to: app-resources
+  # Credentials shipped with the app (project decision). Read by dotenv at startup.
+  - from: .env
+    to: .env
+
+# sharp is native (prebuilt binaries) and must load from disk, not from inside the asar.
+# SQLite uses Node 24's built-in node:sqlite — no native module, nothing to unpack.
+asarUnpack:
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@img/**"
+
+# Auto-update feed: GitHub Releases of the private repo (token via .env / GH_TOKEN).
+publish:
+  provider: github
+  owner: Pavlitto97
+  repo: meet
+  private: true
+
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+# macOS: built unsigned for now (per project decision). Auto-update on mac
+# requires Developer ID + notarization (Squirrel.Mac refuses unsigned) — add later.
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.utilities
+  identity: null

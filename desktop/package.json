@@ -1,0 +1,31 @@
+{
+  "name": "meet-editor-desktop",
+  "version": "0.1.0",
+  "description": "Meet editor — Electron rewrite (Windows + macOS, auto-update, local data)",
+  "author": "Pavel Hrinevych",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "out/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && electron .",
+    "debug": "npm run build && electron --inspect=9229 --remote-debugging-port=9222 .",
+    "dev": "tsc -w -p tsconfig.json",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "publish": "npm run build && electron-builder --publish always"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.3",
+    "sharp": "^0.34.5"
+  }
+}

@@ -1,0 +1,58 @@
+name: Release Desktop
+
+# Білд + публікація релізу в GitHub Releases цього (приватного) репо.
+# Тригер — пуш тегу vX.Y.Z (або вручну). electron-updater на клієнтах читає ці
+# релізи (Windows — авто-апдейт; macOS — поки без підпису, ставиться вручну).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      # sharp prebuilt для ОБОХ macOS-архітектур (universal dmg/zip arm64+x64).
+      - name: Install sharp for both macOS arches
+        if: runner.os == 'macOS'
+        run: |
+          npm i --no-save --cpu=x64 --os=darwin sharp
+          npm i --no-save --cpu=arm64 --os=darwin sharp
+
+      - name: Compile TypeScript
+        run: npm run build
+
+      - name: Build & publish (Windows — NSIS, auto-update)
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & publish (macOS — dmg/zip, unsigned)
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Без підпису: вимикаємо нотаризацію (Mac авто-апдейт додамо разом із Developer ID).
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
