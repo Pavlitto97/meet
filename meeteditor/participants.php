@@ -7,6 +7,7 @@ namespace Meet;
 
 require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/media.php';
+require_once __DIR__ . '/degrade.php';
 
 function list_participants(): array
 {
@@ -75,6 +76,9 @@ function update_participant(string $did, array $body): array
             } catch (\InvalidArgumentException $e) {
                 return ['error' => "bad data URL for $bodyKey", '_status' => 400];
             }
+            // Зменшуємо під розмір плитки Meet при збереженні (split-колаж,
+            // завантаження). downscale-only — повторні PUT малого нічого не псують.
+            [$blob, $mime] = auto_resize_for_avatar($blob, $mime);
             $fields[$mimeCol] = $mime;
             $fields[$blobCol] = $blob;
         }

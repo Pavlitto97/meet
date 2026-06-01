@@ -21,6 +21,7 @@
 namespace Meet;
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/settings.php';
 
 /** Перелік підходів для UI лабораторії. */
 function degrade_methods(): array
@@ -156,6 +157,64 @@ function _jpeg_bytes(\GdImage $im, int $q): string
     \ob_start();
     \imagejpeg($im, null, \max(1, \min(100, $q)));
     return (string) \ob_get_clean();
+}
+
+/**
+ * Пропорційно ЗМЕНШУЄ зображення (лише downscale, без апскейлу), щоб воно
+ * покривало рамку $tw×$th (cover — обидві сторони ≥ цілі), зберігаючи пропорції.
+ * Кроп не робимо — плитка Meet сама object-fit:cover. Уже менше/рівне ⇒ без змін.
+ * Повертає [bytes, mime]. Успіх ⇒ JPEG q92 (легке стиснення, не «деградація»).
+ * Не зміг декодувати (AVIF/битий) ⇒ повертає вхід без змін.
+ */
+function resize_to_cover(string $bytes, string $mime, int $tw, int $th): array
+{
+    if ($tw < 1 || $th < 1 || !\function_exists('imagecreatefromstring')) {
+        return [$bytes, $mime];
+    }
+    $im = @\imagecreatefromstring($bytes);
+    if ($im === false) {
+        return [$bytes, $mime];
+    }
+    $w = \imagesx($im);
+    $h = \imagesy($im);
+    if ($w < 1 || $h < 1) {
+        \imagedestroy($im);
+        return [$bytes, $mime];
+    }
+    $scale = \max($tw / $w, $th / $h); // cover
+    if ($scale >= 1.0) {
+        \imagedestroy($im);
+        return [$bytes, $mime]; // вже не більше за рамку — не апскейлимо
+    }
+    $nw = \max(1, (int) \round($w * $scale));
+    $nh = \max(1, (int) \round($h * $scale));
+    $dst = \imagescale($im, $nw, $nh, IMG_BICUBIC);
+    \imagedestroy($im);
+    if ($dst === false) {
+        return [$bytes, $mime];
+    }
+    $out = _jpeg_bytes($dst, 92);
+    \imagedestroy($dst);
+    return [$out, 'image/jpeg'];
+}
+
+/**
+ * Зменшує зображення під розмір плитки Meet ПРИ ЗБЕРЕЖЕННІ як аватар. Спільний
+ * хелпер для всіх шляхів збереження: апрув генерації (`approve_generation`) і
+ * PUT /api/participants (split-колаж «Розрізати», завантаження в редакторі).
+ * Сама генерація в галереї лишається в оригінальному розмірі. Керується settings
+ * gen_resize / gen_resize_w / gen_resize_h (вимикне). Повертає [bytes, mime].
+ */
+function auto_resize_for_avatar(string $blob, string $mime): array
+{
+    $s = get_settings(false);
+    $on = (string) ($s['gen_resize'] ?? '1');
+    if ($on === '' || $on === '0') {
+        return [$blob, $mime];
+    }
+    $w = (int) ($s['gen_resize_w'] ?? 139);
+    $h = (int) ($s['gen_resize_h'] ?? 185);
+    return resize_to_cover($blob, $mime, $w, $h);
 }
 
 /** Серверна обробка байтів за методом. Повертає [bytes, mime] (для browser-методів — без змін). */

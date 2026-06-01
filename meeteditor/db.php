@@ -137,6 +137,11 @@ function init_db(): void
     if (!isset($gcols['input_mime'])) {
         $con->exec('ALTER TABLE generations ADD COLUMN input_mime TEXT');
     }
+    // Авто-деградація: відсоток сили кодека, з яким зображення вже забейкано
+    // (NULL = не деградовано). Лише для трасування/відображення в адмінці.
+    if (!isset($gcols['degrade_pct'])) {
+        $con->exec('ALTER TABLE generations ADD COLUMN degrade_pct INTEGER');
+    }
     $con->exec("
         CREATE TABLE IF NOT EXISTS prompt_presets (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,

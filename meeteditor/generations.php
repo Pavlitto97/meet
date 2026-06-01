@@ -6,6 +6,41 @@ require_once __DIR__ . '/db.php';
 require_once __DIR__ . '/media.php';
 require_once __DIR__ . '/settings.php';
 require_once __DIR__ . '/openrouter.php';
+require_once __DIR__ . '/degrade.php';
+
+/**
+ * Авто-деградація щойно згенерованого зображення під «поганий кодек».
+ * Кожна картинка отримує ВИПАДКОВУ силу в межах settings gen_degrade_min..max (%),
+ * результат бейкається у JPEG (через server-метод degrade_blob). Браузерні методи
+ * (css) у байти не бейкаються — для них це no-op.
+ * Повертає [bytes, mime, pct|null]; pct=null ⇒ нічого не міняли (вимкнено/не зміг).
+ */
+function auto_degrade_generation(string $blob, string $mime): array
+{
+    $s = get_settings(false);
+    $on = (string) ($s['gen_degrade'] ?? '1');
+    if ($on === '' || $on === '0') {
+        return [$blob, $mime, null];
+    }
+    $method = (string) ($s['gen_degrade_method'] ?? 'gd-jpeg');
+    if (!cam_is_server($method)) {
+        return [$blob, $mime, null];
+    }
+    $min = \max(0, \min(100, (int) ($s['gen_degrade_min'] ?? 60)));
+    $max = \max(0, \min(100, (int) ($s['gen_degrade_max'] ?? 100)));
+    if ($max < $min) {
+        [$min, $max] = [$max, $min];
+    }
+    $pct = $max > $min ? \mt_rand($min, $max) : $min;
+    if ($pct <= 0) {
+        return [$blob, $mime, null];
+    }
+    [$deg, $degMime] = degrade_blob($blob, $mime, $method, $pct / 100.0);
+    if ($deg === $blob) {
+        return [$blob, $mime, null]; // GD не зміг декодувати (AVIF/битий) — лишаємо як є
+    }
+    return [$deg, $degMime, $pct];
+}
 
 /** Виконується у фоновому процесі (gen_worker.php). Оновлює рядок generations. */
 function run_generation(int $genId): void
@@ -57,16 +92,21 @@ function run_generation(int $genId): void
         if ($lastErr && $blob === null) {
             throw $lastErr;
         }
+        // Авто-деградація під «поганий кодек» — випадкова сила на кожну картинку.
+        $degPct = null;
+        if ($blob !== null) {
+            [$blob, $mime, $degPct] = auto_degrade_generation($blob, $mime);
+        }
         $cost = $usage['cost'] ?? null;
         $ptok = $usage['prompt_tokens'] ?? null;
         $otok = $usage['completion_tokens'] ?? ($usage['output_tokens'] ?? null);
         $con = db();
         q($con,
-            "UPDATE generations SET status='done', image=?, image_mime=?, cost_usd=?, "
+            "UPDATE generations SET status='done', image=?, image_mime=?, degrade_pct=?, cost_usd=?, "
             . "prompt_tokens=?, output_tokens=?, finished_at=CURRENT_TIMESTAMP WHERE id=?",
-            [$blob, $mime, $cost, $ptok, $otok, $genId]
+            [$blob, $mime, $degPct, $cost, $ptok, $otok, $genId]
         );
-        log_activity('generation.done', "#$genId cost=" . ($cost ?? ''));
+        log_activity('generation.done', "#$genId cost=" . ($cost ?? '') . ($degPct !== null ? " deg=$degPct%" : ''));
     } catch (\Throwable $e) {
         $msg = \trim((new \ReflectionClass($e))->getShortName() . ': ' . $e->getMessage());
         try {
@@ -137,7 +177,7 @@ function list_generations(?string $participant = null, ?string $status = null): 
         "SELECT g.id, g.participant_id, g.prompt, g.model, g.provider, g.service_tier, "
         . "g.status, g.error, g.image IS NOT NULL AS has_image, g.image_mime, "
         . "g.input_image IS NOT NULL AS has_input, "
-        . "g.cost_usd, g.prompt_tokens, g.output_tokens, g.created_at, g.finished_at, "
+        . "g.cost_usd, g.prompt_tokens, g.output_tokens, g.created_at, g.finished_at, g.degrade_pct, "
         . "COALESCE(p.custom_name, p.original_name) AS participant_name "
         . "FROM generations g LEFT JOIN participants p ON p.device_id = g.participant_id WHERE 1=1";
     $args = [];
@@ -195,9 +235,11 @@ function approve_generation(int $gid, string $which = 'start'): array
             $con->rollBack();
             return ['error' => 'генерація не привʼязана до учасника', '_status' => 400];
         }
+        // При збереженні як аватар — зменшуємо під розмір плитки Meet (settings gen_resize*).
+        [$avBlob, $avMime] = auto_resize_for_avatar($row['image'], $row['image_mime']);
         $st = q($con,
             "UPDATE participants SET $blobCol=?, $mimeCol=?, updated_at=CURRENT_TIMESTAMP WHERE device_id=?",
-            [$row['image'], $row['image_mime'], $pid]
+            [$avBlob, $avMime, $pid]
         );
         if ($st->rowCount() === 0) {
             $con->rollBack();

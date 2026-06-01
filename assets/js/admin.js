@@ -230,6 +230,7 @@ function genCard(g) {
     : isEmptyImage ? `<span class="badge pending">порожньо — повтори</span>`
     : isErr ? `<span class="badge err">помилка</span>`
     : `<span class="badge pending">в обробці</span>`;
+  const degBadge = (g.degrade_pct != null) ? `<span class="badge user" title="авто-деградація кодеком">кодек ${g.degrade_pct}%</span>` : "";
   const resultImg = g.has_image ? `<img src="/api/generation-image/${g.id}?t=${Date.now()}">` : "";
   // Якщо є заморожений оригінал — показуємо «оригінал → результат» поруч.
   const preview = g.has_input
@@ -259,7 +260,7 @@ function genCard(g) {
     </div>`
     : "";
   return `<div class="slot" data-gid="${g.id}" data-pid="${escapeHtml(g.participant_id || "")}">
-    <div class="queue-head"><strong>${escapeHtml(g.participant_name || "—")}</strong>${badge}</div>
+    <div class="queue-head"><strong>${escapeHtml(g.participant_name || "—")}</strong>${badge}${degBadge}</div>
     ${preview}
     ${body}
     ${actions}
@@ -507,6 +508,13 @@ loaders.settings = async () => {
   if (s.gen_model && [...$("#s-model").options].some(o => o.value === s.gen_model)) $("#s-model").value = s.gen_model;
   if (s.gen_provider) $("#s-provider").value = s.gen_provider;
   if (s.gen_tier) $("#s-tier").value = s.gen_tier;
+  $("#s-degrade").value = String(s.gen_degrade) === "0" || s.gen_degrade === "" ? "0" : "1";
+  if (s.gen_degrade_method && [...$("#s-degrade-method").options].some(o => o.value === s.gen_degrade_method)) $("#s-degrade-method").value = s.gen_degrade_method;
+  $("#s-degrade-min").value = s.gen_degrade_min ?? 60;
+  $("#s-degrade-max").value = s.gen_degrade_max ?? 100;
+  $("#s-resize").value = String(s.gen_resize) === "0" || s.gen_resize === "" ? "0" : "1";
+  $("#s-resize-w").value = s.gen_resize_w ?? 139;
+  $("#s-resize-h").value = s.gen_resize_h ?? 185;
   const key = $("#s-key");
   if (s.openrouter_api_key_set) { key.value = ""; key.placeholder = "•••••• (з .env або БД)"; key.readOnly = true; key.style.opacity = ".6"; }
   else { key.placeholder = "sk-or-..."; key.readOnly = false; key.style.opacity = ""; }
@@ -521,6 +529,13 @@ $("#s-gen-code").addEventListener("click", async () => {
 $("#s-model").addEventListener("change", e => call("PUT", "/api/settings", { gen_model: e.target.value }).then(() => toast("Збережено", "ok")));
 $("#s-provider").addEventListener("change", e => call("PUT", "/api/settings", { gen_provider: e.target.value }).then(() => toast("Збережено", "ok")));
 $("#s-tier").addEventListener("change", e => call("PUT", "/api/settings", { gen_tier: e.target.value }).then(() => toast("Збережено", "ok")));
+$("#s-degrade").addEventListener("change", e => call("PUT", "/api/settings", { gen_degrade: e.target.value }).then(() => toast("Збережено", "ok")));
+$("#s-degrade-method").addEventListener("change", e => call("PUT", "/api/settings", { gen_degrade_method: e.target.value }).then(() => toast("Збережено", "ok")));
+$("#s-degrade-min").addEventListener("change", e => call("PUT", "/api/settings", { gen_degrade_min: e.target.value }).then(() => toast("Збережено", "ok")));
+$("#s-degrade-max").addEventListener("change", e => call("PUT", "/api/settings", { gen_degrade_max: e.target.value }).then(() => toast("Збережено", "ok")));
+$("#s-resize").addEventListener("change", e => call("PUT", "/api/settings", { gen_resize: e.target.value }).then(() => toast("Збережено", "ok")));
+$("#s-resize-w").addEventListener("change", e => call("PUT", "/api/settings", { gen_resize_w: e.target.value }).then(() => toast("Збережено", "ok")));
+$("#s-resize-h").addEventListener("change", e => call("PUT", "/api/settings", { gen_resize_h: e.target.value }).then(() => toast("Збережено", "ok")));
 $("#s-key").addEventListener("change", async e => {
   const v = e.target.value.trim();
   if (!v) return;

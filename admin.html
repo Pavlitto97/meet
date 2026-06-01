@@ -123,6 +123,34 @@
         <div class="field"><label>Баланс</label><div class="flex"><span class="value mono" id="s-balance">—</span><button type="button" class="iconbtn" id="s-balance-refresh"><span class="msym">refresh</span></button></div></div>
       </div>
     </div>
+    <div class="card">
+      <h3>Авто-деградація генерацій <span class="muted">(кодек, бейкається в результат)</span></h3>
+      <div class="flex">
+        <div class="field"><label for="s-degrade">Стан</label>
+          <select id="s-degrade"><option value="1">Увімкнено</option><option value="0">Вимкнено</option></select>
+        </div>
+        <div class="field"><label for="s-degrade-method">Метод</label>
+          <select id="s-degrade-method">
+            <option value="gd-jpeg">Лише кодек (gd-jpeg)</option>
+            <option value="gd">Повна вебка (gd)</option>
+          </select>
+        </div>
+        <div class="field"><label for="s-degrade-min">Сила від, %</label><input id="s-degrade-min" type="number" min="0" max="100" placeholder="60"></div>
+        <div class="field"><label for="s-degrade-max">Сила до, %</label><input id="s-degrade-max" type="number" min="0" max="100" placeholder="100"></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Кожна згенерована картинка одразу після відповіді моделі стискається кодеком з випадковою силою з цього діапазону й бейкається у JPEG. Оригінал-вхід (input_image) лишається чистим — порівняння «оригінал → результат» працює.</p>
+    </div>
+    <div class="card">
+      <h3>Розмір при збереженні <span class="muted">(під плитку Meet, при апруві)</span></h3>
+      <div class="flex">
+        <div class="field"><label for="s-resize">Стан</label>
+          <select id="s-resize"><option value="1">Зменшувати</option><option value="0">Лишати як є</option></select>
+        </div>
+        <div class="field"><label for="s-resize-w">Ширина, px</label><input id="s-resize-w" type="number" min="16" max="4096" placeholder="139"></div>
+        <div class="field"><label for="s-resize-h">Висота, px</label><input id="s-resize-h" type="number" min="16" max="4096" placeholder="185"></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">У галереї генерація лишається в оригінальному розмірі. Коли приймаєш її як аватар (→ Початок / → Кінець), фото пропорційно зменшується (cover, лише вниз), щоб покрити цю рамку.</p>
+    </div>
   </section>
 
   <!-- ═══ ПРОМТ ═══ -->

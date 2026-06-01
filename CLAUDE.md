@@ -175,12 +175,15 @@ participants (
 settings (
   key   TEXT PRIMARY KEY,             -- 'start_time'|'start_period'|'end_time'|'end_period'|
   value TEXT                          --   'meeting_code'|'gen_model'|'gen_provider'|'gen_tier'|
-                                      --   'cam_method'|'cam_intensity'|'openrouter_api_key'
+                                      --   'cam_method'|'cam_intensity'|'openrouter_api_key'|
+                                      --   'gen_degrade'|'gen_degrade_method'|'gen_degrade_min'|'gen_degrade_max'|
+                                      --   'gen_resize'|'gen_resize_w'|'gen_resize_h'
 )
 
 generations (id, participant_id, prompt, model, provider, service_tier,
              status, error, image BLOB, image_mime, cost_usd, prompt_tokens,
-             output_tokens, created_at, finished_at)
+             output_tokens, created_at, finished_at, input_image BLOB, input_mime,
+             degrade_pct)  -- degrade_pct = % сили авто-деградації кодеком (NULL = ні)
 prompt_presets (id, name UNIQUE, body, created_at, updated_at)  -- іменовані промти
 activity (id, ts, action, detail)  -- журнал дій (тримається ≤500 останніх)
 screenshots (id, which, image BLOB, image_mime, width, height,
@@ -271,7 +274,22 @@ daemon-потоку Python). Воркер `run_generation()`:
 - читає рядок, бере `openrouter_api_key` з settings;
 - викликає OpenRouter (`openrouter.php`, curl), ретраїть до 3 разів empty-image
   (HTTP-помилки 401/404/429 фейлить одразу);
-- пише `status=done` + image/cost або `status=error` + повідомлення.
+- **авто-деградація** (`auto_degrade_generation()`): якщо settings `gen_degrade != 0`,
+  бейкає результат у JPEG через server-метод (`gen_degrade_method`, дефолт `gd-jpeg`)
+  з **випадковою** силою в межах `gen_degrade_min..gen_degrade_max` % (дефолт 60..100).
+  Бейк іде в `generations.image`; `input_image` (оригінал-вхід) лишається чистим.
+  Збережений % осідає в колонці `degrade_pct`. Браузерні методи (css) → no-op.
+- пише `status=done` + image/cost (+`degrade_pct`) або `status=error` + повідомлення.
+
+`generations.image` лишається в **оригінальному розмірі** (деградація кодеком —
+так, розмір — ні), щоб галерея показувала повноцінний результат. Зменшення під
+плитку Meet робиться при **збереженні аватара** — спільний хелпер
+`Meet\auto_resize_for_avatar()` у `degrade.php` (→ `resize_to_cover()`, cover, лише
+downscale, settings `gen_resize`/`gen_resize_w`/`gen_resize_h`, дефолт 139×185).
+Викликається в **обох** шляхах: апрув генерації (`approve_generation()`) і
+`update_participant()` (PUT /api/participants — split-колаж «Розрізати»,
+завантаження аватара в редакторі). Тобто аватар осідає вже зменшеним, а сама
+генерація в галереї — ні. downscale-only ⇒ повторні PUT нічого не псують.
 
 Кілька процесів пишуть у той самий `data.db` — `PRAGMA busy_timeout=5000` на
 кожному підключенні гасить «database is locked».
@@ -341,9 +359,10 @@ daemon-потоку Python). Воркер `run_generation()`:
 - Підтримка «3 others» — якщо знадобиться розгорнути групу і дати кожному фото.
 - Інтернаціоналізація — зараз тексти UI тільки українські.
 - Drag-and-drop reorder (зараз — стрілки ↑↓ в адмінці).
-- Webcam-деградація: per-participant сила (колонка `degrade_override`) і опційний
-  бейк GD-результату на `approve_generation()` (зараз — лише на льоту в рендері/прев'ю;
-  `generations.image` завжди лишається чистим оригіналом).
+- Webcam-деградація: per-participant сила (колонка `degrade_override`). Бейк на
+  льоту в рендері/прев'ю лишається для cam_* (рендер/скріни). Авто-деградація
+  щойно згенерованих картинок уже є — `auto_degrade_generation()` у воркері
+  (settings `gen_degrade*`, колонка `degrade_pct`); бейкає в `generations.image`.
 
 ## Конвенції
 
