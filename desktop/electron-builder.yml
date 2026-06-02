@@ -6,10 +6,11 @@ directories:
   output: dist
   buildResources: build
 
-# Renderer (vanilla HTML/JS) is shipped as-is; main/preload are compiled to out/.
+# Renderer is the Vite-built Vue SPA (renderer/dist). main/preload → out/. The Vue
+# source (renderer/src, index.html, public/) is NOT shipped — only the bundled dist.
 files:
   - out/**/*
-  - renderer/**/*
+  - renderer/dist/**/*
   - package.json
 
 # The 2.9MB source Meet page + its .bak ship read-only outside the asar,

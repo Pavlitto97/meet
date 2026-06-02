@@ -37,9 +37,9 @@ export function promptSeedPath(): string {
   return resourcePath('promt.md');
 }
 
-/** Тека renderer (3 HTML + assets). У dev — desktop/renderer; у пакеті — всередині asar. */
+/** Білд Vue SPA (Vite outDir = renderer/dist). dev — desktop/renderer/dist; пакет — всередині asar. */
 export function rendererDir(): string {
-  return path.join(app.getAppPath(), 'renderer');
+  return path.join(app.getAppPath(), 'renderer', 'dist');
 }
 
 /** Шлях до .env (креди). dev — desktop/.env; пакет — process.resourcesPath/.env. */

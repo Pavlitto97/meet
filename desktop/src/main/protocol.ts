@@ -12,7 +12,7 @@ import { STATIC_CONTENT_TYPES } from './services/config';
 
 function serveStatic(rawPathname: string): MeetResponse {
   let rel = decodeURIComponent(rawPathname.replace(/^\/+/, ''));
-  if (rel === '') rel = 'editor.html';
+  if (rel === '') rel = 'index.html';
   const dir = rendererDir();
   const target = path.normalize(path.join(dir, rel));
   // Захист від виходу за межі renderer.

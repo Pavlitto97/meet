@@ -1,0 +1,56 @@
+name: CI
+
+# Перевірка на PR/пуш (НЕ реліз): збірка renderer+main (vite+tsc = і тайпчек) та
+# Playwright E2E-smoke на цільових платформах. Релізні збірки (NSIS/dmg) — окремо
+# у release.yml на тег v*. Тут інсталятор НЕ потрібен: тест піднімає зібраний
+# out/main/index.js напряму через electron (args:['.']).
+on:
+  pull_request:
+    branches: [main]
+    paths: ['desktop/**', '.github/workflows/ci.yml']
+  push:
+    branches: [main, electron-rewrite]
+    paths: ['desktop/**', '.github/workflows/ci.yml']
+  workflow_dispatch:
+
+# Новий пуш у ту саму гілку/PR скасовує попередній прогін.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest] # цільові платформи (як у release.yml)
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      # build (vite+tsc) + playwright test. Браузери Playwright НЕ ставимо —
+      # Electron-тести ганяють власний electron-бінарник, який поставив npm ci.
+      # CI=true (GitHub Actions) → reporter github + html (див. playwright.config.ts).
+      - name: Build & E2E (Playwright)
+        run: npm run test:e2e
+
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: desktop/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore

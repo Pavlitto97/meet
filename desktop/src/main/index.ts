@@ -33,16 +33,51 @@ function createWindow(): BrowserWindow {
   win.webContents.setWindowOpenHandler(({ url }) => {
     return url.startsWith('app://') ? { action: 'allow' } : { action: 'deny' };
   });
-  void win.loadURL('app://meet/editor.html');
+  // Vue SPA (Vite-білд) із hash-роутингом — єдиний вхід index.html.
+  void win.loadURL('app://meet/index.html');
   return win;
 }
 
-app.whenReady().then(() => {
+/**
+ * DevTools-розширення (Vue Devtools) — ТІЛЬКИ в dev (`!app.isPackaged`).
+ * Ставиться у default-сесію через electron-devtools-installer. Викликаємо БЕЗ await
+ * (у фоні, після появи вікна), щоб мережеве завантаження з Chrome Web Store не
+ * затримувало старт. Динамічний import + try/catch: пакет не тягнеться у прод-бандл
+ * і збій (офлайн/недоступний Chrome Web Store) не валить застосунок.
+ *
+ * ВАЖЛИВО (обмеження Electron #34386, «not planned»): DevTools-розширення НЕ
+ * чіпляються до рендера, що віддається кастомним привілейованим протоколом `app://`
+ * — лише http/https (і file:// з allowFileAccess). Оскільки і SPA, і весь /api/*
+ * рідерер бере з origin `app://meet`, панель Vue Devtools у поточному dev-флоу не
+ * зʼявиться. Інспектор/Console/Network (нативний DevTools-панель нижче) працюють
+ * над app:// як завжди. Розширення лишається підключеним і запрацює автоматично,
+ * якщо зʼявиться dev-флоу з рендером по http (напр. vite dev server).
+ */
+async function installDevtools(): Promise<void> {
+  try {
+    const { installExtension, VUEJS_DEVTOOLS } = await import('electron-devtools-installer');
+    const ext = await installExtension(VUEJS_DEVTOOLS, {
+      loadExtensionOptions: { allowFileAccess: true },
+    });
+    log.info('DevTools extension added', { name: ext.name });
+  } catch (err) {
+    log.warn('Vue Devtools install skipped (dev-only; not attached over app://)', err);
+  }
+}
+
+app.whenReady().then(async () => {
   dotenv.config({ path: envPath() }); // креди з .env (до initDb, що сидить ключ із env)
   log.info('Meet Editor starting', { version: app.getVersion(), packaged: app.isPackaged });
   registerAppProtocol();
   initDb();
-  createWindow();
+  const win = createWindow();
+  // DevTools лише у локальному dev: не в проді, не під E2E/CI (де installExtension
+  // тягнувся б у Chrome Web Store і гальмував/флакав запуск). Вікно вже створене —
+  // installDevtools() без await, щоб не блокувати старт на мережі.
+  if (!app.isPackaged && !process.env.CI && !process.env.E2E) {
+    void installDevtools(); // Vue Devtools у default-сесію (у фоні)
+    win.webContents.openDevTools({ mode: 'detach' }); // нативний DevTools (працює над app://)
+  }
   initUpdater();
 
   app.on('activate', () => {

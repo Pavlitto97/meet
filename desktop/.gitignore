@@ -3,4 +3,9 @@ out/
 dist/
 *.log
 .DS_Store
+# Playwright E2E artifacts
+test-results/
+playwright-report/
+blob-report/
+.playwright/
 # NOTE: .env is intentionally committed (project decision — creds live in the private repo).
