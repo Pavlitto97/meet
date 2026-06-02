@@ -40,11 +40,26 @@ jobs:
       - name: Install deps
         run: npm ci
 
-      # build (vite+tsc) + playwright test. Браузери Playwright НЕ ставимо —
-      # Electron-тести ганяють власний electron-бінарник, який поставив npm ci.
+      - name: Build (renderer + main)
+        run: npm run build
+
+      # Бінарник Electron на чистому CI ненадійний: npm-пакет electron@42 не має
+      # власного postinstall, а isInstalled() часом «бачить» стале path.txt без
+      # самого бінарника → Playwright _electron.launch падає ENOENT (path.txt).
+      # Форсимо ЧИСТЕ завантаження бінарника (rm + force_no_cache) ПІСЛЯ білда,
+      # перед тестом, і верифікуємо, що executable на місці. shell:bash → працює
+      # і на windows-latest (Git Bash). Браузери Playwright не ставимо (Electron-тести
+      # ганяють власний electron-бінарник).
+      - name: Ensure Electron binary
+        shell: bash
+        run: |
+          rm -rf node_modules/electron/dist node_modules/electron/path.txt
+          force_no_cache=true node node_modules/electron/install.js
+          node -e "const p=require('electron'),fs=require('fs');if(typeof p!=='string'||!fs.existsSync(p)){console.error('Electron binary MISSING at',p);process.exit(1)}console.log('Electron OK:',p)"
+
       # CI=true (GitHub Actions) → reporter github + html (див. playwright.config.ts).
-      - name: Build & E2E (Playwright)
-        run: npm run test:e2e
+      - name: E2E (Playwright)
+        run: npx playwright test
 
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
