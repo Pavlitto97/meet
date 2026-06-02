@@ -1,10 +1,12 @@
 // Гарантує, що бінарник Electron реально завантажений (node_modules/electron/dist +
 // path.txt). Потрібно, бо npm-пакет electron@42 НЕ має postinstall, а його install.js
-// на CI часом виходить 0 ще ДО завершення async-завантаження (binary відсутній на
-// момент тесту → Playwright _electron.launch падає ENOENT path.txt).
+// (і навіть звичайний await) на деяких CI-раннерах виходить ще ДО завершення
+// розпакування — node бачить порожній event loop і виходить ("Detected unsettled
+// top-level await", exit 13) → бінарник відсутній, Playwright _electron.launch падає
+// ENOENT path.txt.
 //
-// На відміну від install.js, тут завантаження/розпакування ЯВНО awaited (процес не
-// завершиться, поки path.txt не записано), з ретраями і повним логом помилок.
+// Фікс: ref'd keep-alive таймер тримає event loop живим, поки триває завантаження+
+// розпакування; async main() (без top-level await) + ретраї + верифікація.
 // Запускати з кореня пакета desktop/: `node scripts/ensure-electron.mjs`.
 import { downloadArtifact } from '@electron/get';
 import extract from 'extract-zip';
@@ -21,9 +23,14 @@ const exe = path.join(dir, 'dist', exeRel);
 const pathTxt = path.join(dir, 'path.txt');
 const installed = () => fs.existsSync(pathTxt) && fs.existsSync(exe);
 
-if (installed()) {
-  console.log('Electron already installed:', exe);
-} else {
+// Не дати node вийти, поки async-робота не завершилась (див. коментар вище).
+const keepAlive = setInterval(() => {}, 2 ** 30);
+
+async function main() {
+  if (installed()) {
+    console.log('Electron already installed:', exe);
+    return;
+  }
   let lastErr;
   for (let attempt = 1; attempt <= 3 && !installed(); attempt++) {
     try {
@@ -44,8 +51,15 @@ if (installed()) {
     }
   }
   if (!installed()) {
-    console.error('FATAL: Electron binary still missing after retries.', lastErr?.message ?? '');
-    process.exit(1);
+    throw new Error(`Electron binary still missing after retries. ${lastErr?.message ?? ''}`);
   }
+  console.log('Electron OK:', exe);
 }
-console.log('Electron OK:', exe);
+
+main()
+  .then(() => clearInterval(keepAlive))
+  .catch((e) => {
+    clearInterval(keepAlive);
+    console.error('FATAL:', e?.stack || e);
+    process.exit(1);
+  });
