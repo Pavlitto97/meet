@@ -1,24 +1,27 @@
 // Гарантує, що бінарник Electron реально завантажений (node_modules/electron/dist +
-// path.txt). Потрібно, бо npm-пакет electron@42 НЕ має postinstall, а його install.js
-// на CI поводиться зле: або виходить ДО завершення розпакування ("unsettled top-level
-// await"), або download-зʼєднання на раннері ЗАВИСАЄ без таймауту (годинами).
+// path.txt). Потрібно, бо npm-пакет electron@42 НЕ має postinstall, а штатний шлях
+// (install.js → extract-zip) на CI-раннерах ЗАВИСАЄ на РОЗПАКУВАННІ macOS-zip
+// (.app-бандл містить симлінки — extract-zip висне >3 хв). Download через @electron/get
+// працює; проблема лише в extract.
 //
-// Тут кожна async-операція (download/extract) обгорнута таймаутом: pending-таймер
-// тримає event loop живим (нема передчасного виходу) І жорстко обмежує зависання
-// (timeout → reject → ретрай). Без таймаута — fail-fast (exit 1), НЕ вічний hang.
+// Тому: download через @electron/get (з таймаутом), а РОЗПАКУВАННЯ — нативним
+// інструментом СИНХРОННО (ditto на macOS — еталон для .app із симлінками; tar/bsdtar
+// на Windows). Синхронний execFileSync блокує потік → жодних проблем event loop/hang;
+// `timeout` на ньому + ретраї + exit 1 на провал (fail-fast, не вічний hang).
 // Запуск з кореня пакета desktop/: `node scripts/ensure-electron.mjs`.
 import { downloadArtifact } from '@electron/get';
-import extract from 'extract-zip';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 const dir = path.resolve('node_modules/electron');
+const distDir = path.join(dir, 'dist');
 const version = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
 const exeRel =
   process.platform === 'win32' ? 'electron.exe'
   : process.platform === 'darwin' ? 'Electron.app/Contents/MacOS/Electron'
   : 'electron';
-const exe = path.join(dir, 'dist', exeRel);
+const exe = path.join(distDir, exeRel);
 const pathTxt = path.join(dir, 'path.txt');
 const installed = () => fs.existsSync(pathTxt) && fs.existsSync(exe);
 
@@ -30,8 +33,21 @@ function withTimeout(promise, ms, label) {
   const guard = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
   });
-  // promise.finally чистить таймер; race повертає результат або timeout-reject.
   return Promise.race([Promise.resolve(promise).finally(() => clearTimeout(timer)), guard]);
+}
+
+// Синхронне розпакування нативним інструментом (без extract-zip — він висне на .app).
+function extractZip(zip) {
+  fs.rmSync(distDir, { recursive: true, force: true });
+  fs.mkdirSync(distDir, { recursive: true });
+  const opts = { stdio: 'inherit', timeout: EXTRACT_TIMEOUT };
+  if (process.platform === 'darwin') {
+    execFileSync('ditto', ['-x', '-k', zip, distDir], opts); // зберігає симлінки .app
+  } else if (process.platform === 'win32') {
+    execFileSync('tar', ['-xf', zip, '-C', distDir], opts); // bsdtar (Win10+) розпаковує zip
+  } else {
+    execFileSync('unzip', ['-o', '-q', zip, '-d', distDir], opts);
+  }
 }
 
 async function attempt(n) {
@@ -41,11 +57,10 @@ async function attempt(n) {
     DOWNLOAD_TIMEOUT,
     'download',
   );
-  console.log(`Downloaded ${zip} (${fs.statSync(zip).size} bytes); extracting…`);
-  fs.rmSync(path.join(dir, 'dist'), { recursive: true, force: true });
-  await withTimeout(extract(zip, { dir: path.join(dir, 'dist') }), EXTRACT_TIMEOUT, 'extract');
+  console.log(`Downloaded ${zip} (${fs.statSync(zip).size} bytes); extracting with native tool…`);
+  extractZip(zip);
   fs.writeFileSync(pathTxt, exeRel);
-  console.log('Wrote path.txt');
+  console.log('Extracted and wrote path.txt');
 }
 
 async function main() {
