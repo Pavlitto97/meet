@@ -19,7 +19,7 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "publish": "npm run build && electron-builder --publish always",
     "test:e2e": "npm run build && playwright test",
-    "postinstall": "node node_modules/electron/install.js"
+    "postinstall": "node scripts/ensure-electron.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

@@ -58,12 +58,13 @@
   Playwright) на `windows-latest` + `macos-latest`.
 - Реліз: підняти `version` у `package.json` → тег `vX.Y.Z` → пуш → Actions збере й
   опублікує. `electron-updater` на клієнтах читає ці релізи.
-- ⚠️ **`postinstall` у package.json обовʼязковий, не прибирати:** npm-пакет
-  `electron@42` НЕ має власного postinstall, тож `npm ci` сам по собі НЕ тягне
-  бінарник Electron (нема `node_modules/electron/path.txt`) — і `_electron.launch`
-  у Playwright падає `ENOENT path.txt`. Наш `postinstall: node
-  node_modules/electron/install.js` (idempotent, `@electron/get`) тягне бінарник на
-  будь-якому чистому `npm ci` — потрібно і для CI-E2E, і щоб `npm start` працював зі свіжого клону.
+- ⚠️ **`scripts/ensure-electron.mjs` (postinstall) обовʼязковий, не прибирати:**
+  npm-пакет `electron@42` НЕ має власного postinstall, а його `install.js` на CI
+  часом виходить ДО завершення async-завантаження → бінарник відсутній, і
+  `_electron.launch` у Playwright падає `ENOENT path.txt`. Скрипт робить
+  **awaited+verified** завантаження (`@electron/get`, ретраї, пише `path.txt`),
+  idempotent. Висить на `postinstall` (свіжий `npm ci` → `npm start`/E2E працюють) і
+  окремим кроком `Ensure Electron binary` у `ci.yml` перед E2E.
 
 ## Поточні рішення / обмеження
 

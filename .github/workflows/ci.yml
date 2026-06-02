@@ -43,19 +43,13 @@ jobs:
       - name: Build (renderer + main)
         run: npm run build
 
-      # Бінарник Electron на чистому CI ненадійний: npm-пакет electron@42 не має
-      # власного postinstall, а isInstalled() часом «бачить» стале path.txt без
-      # самого бінарника → Playwright _electron.launch падає ENOENT (path.txt).
-      # Форсимо ЧИСТЕ завантаження бінарника (rm + force_no_cache) ПІСЛЯ білда,
-      # перед тестом, і верифікуємо, що executable на місці. shell:bash → працює
-      # і на windows-latest (Git Bash). Браузери Playwright не ставимо (Electron-тести
-      # ганяють власний electron-бінарник).
+      # Гарантуємо бінарник Electron перед тестом: npm-пакет electron@42 не має
+      # postinstall, а його install.js на CI часом виходить ДО завершення async-
+      # завантаження → Playwright _electron.launch падає ENOENT path.txt. Скрипт
+      # робить awaited+verified завантаження (idempotent: no-op, якщо вже стоїть із
+      # postinstall). Браузери Playwright не ставимо — Electron-тести ганяють власний бінарник.
       - name: Ensure Electron binary
-        shell: bash
-        run: |
-          rm -rf node_modules/electron/dist node_modules/electron/path.txt
-          force_no_cache=true node node_modules/electron/install.js
-          node -e "const p=require('electron'),fs=require('fs');if(typeof p!=='string'||!fs.existsSync(p)){console.error('Electron binary MISSING at',p);process.exit(1)}console.log('Electron OK:',p)"
+        run: node scripts/ensure-electron.mjs
 
       # CI=true (GitHub Actions) → reporter github + html (див. playwright.config.ts).
       - name: E2E (Playwright)
