@@ -20,6 +20,7 @@ concurrency:
 
 jobs:
   e2e:
+    timeout-minutes: 25 # жорсткий стоп: stalled-download Electron колись висів ~5 год
     strategy:
       fail-fast: false
       matrix:
