@@ -14,6 +14,11 @@
       <button v-show="screenshots.length" class="danger btn-sm" @click="bulkDel('all', 'ВСЮ історію скрінів')"><span class="msym sm">delete</span>Очистити історію</button>
     </div>
 
+    <p class="hint" style="margin:0 0 16px">
+      Скрін знімається з рендеру <b>активної групи</b><template v-if="activeGroup"> — зараз це «<b>{{ activeGroup.name }}</b>»</template>.
+      Змінити активну групу можна на вкладці «Групи».
+    </p>
+
     <div class="stat-grid compact" style="margin-bottom:16px">
       <div class="stat-card accent"><span class="label">Усього</span><span class="value">{{ screenshots.length }}</span></div>
       <div class="stat-card ok"><span class="label">Початок</span><span class="value">{{ startCount }}</span></div>
@@ -47,12 +52,13 @@ import { call } from '@/lib/api'
 import { fmtBytes } from '@/lib/util'
 import { useUiStore } from '@/stores/ui'
 import { AdminModalKey } from '@/components/admin/adminModal'
-import type { Screenshot } from '@/types'
+import type { Group, Screenshot } from '@/types'
 
 const ui = useUiStore()
 const modal = inject(AdminModalKey)!
 
 const screenshots = ref<Screenshot[]>([])
+const activeGroup = ref<Group | null>(null)
 const shotSize = ref('1920x1080')
 const capturing = ref(false)
 const bust = ref(Date.now())
@@ -61,7 +67,7 @@ const endCount = computed(() => screenshots.value.filter((s) => s.which === 'end
 const startCount = computed(() => screenshots.value.length - endCount.value)
 
 function sub(s: Screenshot): string {
-  return [s.created_at, fmtBytes(s.size_bytes), s.meeting_code, s.label].filter(Boolean).join(' · ')
+  return [s.created_at, fmtBytes(s.size_bytes), s.group_name, s.meeting_code, s.label].filter(Boolean).join(' · ')
 }
 function parseSize(): { width: number; height: number } {
   const [w, h] = (shotSize.value || '1280x720').split('x').map(Number)
@@ -69,7 +75,9 @@ function parseSize(): { width: number; height: number } {
 }
 
 async function load(): Promise<void> {
-  screenshots.value = await call<Screenshot[]>('GET', '/api/screenshots')
+  const [list, groups] = await Promise.all([call<Screenshot[]>('GET', '/api/screenshots'), call<Group[]>('GET', '/api/groups')])
+  screenshots.value = list
+  activeGroup.value = groups.find((g) => g.active) ?? null
   bust.value = Date.now()
 }
 
@@ -112,6 +120,7 @@ function openShotModal(s: Screenshot): void {
     meta: [
       `${s.width}×${s.height}`,
       fmtBytes(s.size_bytes),
+      s.group_name ? `група: ${s.group_name}` : '',
       s.meeting_code ? `код: ${s.meeting_code}` : '',
       s.created_at ? String(s.created_at) : '',
     ].filter(Boolean),

@@ -67,8 +67,13 @@ export function defaultParticipants(): DefaultParticipant[] {
   ];
 }
 
+// ─── Групи учасників ──────────────────────────────────────────────────────────────
+export const DEFAULT_GROUP_NAME = 'Група 1';
+
 // ─── Дефолтні налаштування ────────────────────────────────────────────────────────
 export const DEFAULT_SETTINGS: Record<string, string> = {
+  // Активна група: її учасники йдуть у рендер і скріни.
+  active_group_id: '1',
   start_time: '10:34',
   start_period: 'PM',
   end_time: '11:15',

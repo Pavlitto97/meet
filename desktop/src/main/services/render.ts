@@ -12,6 +12,7 @@ import { getSettings } from './settings';
 import { meetHtmlPath } from './paths';
 import { ORIGINAL_MEETING_CODE, ORIGINAL_TIME, ORIGINAL_PERIOD, emojiCodepoints } from './config';
 import { parseCam, camIsServer, camHeadMarkup, degradeBlob } from './degrade';
+import { activeGroupId } from './groups';
 
 const utf8ToLatin1 = (s: string) => Buffer.from(s, 'utf8').toString('latin1');
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -20,9 +21,16 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // (latin1) і переюзаємо. Кожен рендер працює на копіях через slice/replace.
 let cachedMeetHtml: string | null = null;
 
-export async function renderMeet(which = 'start', fit: string | null = null, cam: string | null = null): Promise<Buffer> {
+export async function renderMeet(
+  which = 'start',
+  fit: string | null = null,
+  cam: string | null = null,
+  group: string | null = null
+): Promise<Buffer> {
   if (which !== 'start' && which !== 'end') which = 'start';
   const { method: camMethod, intensity: camI } = parseCam(cam);
+  // Учасники й імена — лише з однієї групи: явної (?group=) або активної.
+  const groupId = group && Number.isFinite(parseInt(group, 10)) ? parseInt(group, 10) : activeGroupId();
 
   if (cachedMeetHtml === null) cachedMeetHtml = fs.readFileSync(meetHtmlPath()).toString('latin1');
   let html = cachedMeetHtml;
@@ -37,7 +45,8 @@ export async function renderMeet(which = 'start', fit: string | null = null, cam
 
   const rows: Record<string, any> = {};
   for (const r of all(
-    'SELECT device_id, original_name, custom_name, avatar, avatar_mime, avatar_end, avatar_end_mime FROM participants'
+    'SELECT device_id, original_name, custom_name, avatar, avatar_mime, avatar_end, avatar_end_mime FROM participants WHERE group_id = ?',
+    [groupId]
   )) {
     rows[r.device_id] = r;
   }
@@ -88,7 +97,8 @@ export async function renderMeet(which = 'start', fit: string | null = null, cam
 
   // ─ імена: глобальна заміна (плитка + банер + лист учасників) ─
   const namePairs = all(
-    "SELECT original_name, custom_name FROM participants WHERE custom_name IS NOT NULL AND custom_name != ''"
+    "SELECT original_name, custom_name FROM participants WHERE group_id = ? AND custom_name IS NOT NULL AND custom_name != ''",
+    [groupId]
   );
   // Довші оригінали — перші (щоб короткі підрядки не псували довші).
   namePairs.sort((a, b) => b.original_name.length - a.original_name.length);

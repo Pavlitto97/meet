@@ -30,8 +30,11 @@ npm start            # tsc + electron
 npm run dev          # tsc -w (в окремому терміналі) + `electron .`
 ```
 
-Редактор відкривається на `app://meet/editor.html`. Адмінка — `app://meet/admin.html`,
-лабораторія деградації — `app://meet/degrade-lab.html`.
+Застосунок відкриває Vue-SPA (`app://meet/index.html`) одразу на адмін-панелі.
+Вкладки: **Групи** (склади учасників зі своїми фото/генераціями; активна група йде
+у рендер і скріни) → всередині групи — учасники з трьома зображеннями
+(Оригінал / Початок / Кінець), **Генерації** (історія + порівняння, фільтри),
+**Скріни**, **Налаштування** (окрема плашка API-токенів), **Промт**.
 
 ## Креди (.env)
 
@@ -50,7 +53,8 @@ GH_TOKEN=github_pat_...          # fine-grained PAT, цей репо, Contents: 
 ## Дані (локально)
 
 Усе — в `app.getPath('userData')`:
-- `data.db` — SQLite (учасники, налаштування, генерації, скріни, журнал) — схема 1:1 з PHP.
+- `data.db` — SQLite (групи, учасники з source-зображеннями, налаштування,
+  генерації, скріни, журнал). Стара одногрупна БД мігрує автоматично (група №1).
 - `promt.md` — промт.
 - `index.html`/`index.html.bak` — read-only у ресурсах застосунку (рендер їх не мутує).
 
@@ -101,23 +105,24 @@ src/main/
     db.ts             ← db.php на node:sqlite (схема 1:1, BLOB, міграції)
     media.ts          ← media.php (data:URL ↔ Buffer)
     settings.ts       ← settings.php (секрети приховано)
-    participants.ts   ← participants.php (CRUD + reorder)
+    groups.ts         ← групи учасників (CRUD + активна група)
+    participants.ts   ← participants.php (CRUD + reorder; групи, source-зображення)
     openrouter.ts     ← openrouter.php (curl → native fetch)
     degrade.ts        ← degrade.php (GD → sharp; CSS-метод формула-в-формулу)
     render.ts         ← render.php (БАЙТОВА заміна у latin1; верифіковано cmp = PHP)
     generations.ts    ← generations.php (inline-async замість детачнутого воркера)
     screenshots.ts    ← screenshots.php (headless Chrome → capturePage)
     admin.ts          ← admin.php (stats/system/db/export/import/backup)
-renderer/             ← editor.html / admin.html / degrade-lab.html + assets (без змін)
-resources/            ← index.html (2.9MB) + .bak
+renderer/             ← Vue 3 + Vite SPA (вкладки адмінки: групи/генерації/скріни/налаштування/промт)
+resources/            ← index.html (2.9MB) + .bak + promt.md
 ```
 
-## Калібрування webcam-деградації
+## Webcam-деградація
 
-sharp ≠ PHP GD байт-у-байт. Криві сили (`blur` sigma, шум, якість JPEG) у
-`degrade.ts::webcamize()` — наближення GD-конвеєра. Підкрути їх у `degrade-lab.html`
-(порівняння «оригінал ↔ результат», повзунок сили) під бажаний вигляд. CSS-метод
-(`camSpec`) портований формула-в-формулу — там калібрування не треба.
+UI-лабораторію прибрано. Лишилась **авто-деградація генерацій** (settings
+`gen_degrade*`: кодек бейкається у щойно згенеровану картинку з випадковою силою)
+та cam-гейт рендеру `?cam=<метод>:<сила>` (без `cam` — байт-у-байт). Криві сили —
+у `degrade.ts::webcamize()` (sharp-наближення GD-конвеєра).
 
 ## Перевірено
 

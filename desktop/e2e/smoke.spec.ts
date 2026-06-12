@@ -1,35 +1,20 @@
-import { test, expect, _electron as electron } from '@playwright/test';
-import type { ElectronApplication, Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { launchApp, closeApp, type LaunchedApp } from './helpers';
 
-// Smoke-тест: піднімаємо ЗІБРАНИЙ застосунок (out/main/index.js — package.json "main")
-// через args:['.'] і перевіряємо, що головне вікно відкривається й Vue-SPA монтується.
-// Білд робить скрипт test:e2e (npm run build && playwright test) — args:['.'] запускає
-// саме компіляцію, а не src/. electron-builder/інсталятор для тестів НЕ потрібен.
-let app: ElectronApplication;
-let win: Page;
+// Smoke: застосунок піднімається, Vue-SPA монтується на app://, хедер чистий
+// (без «Лабораторії» і download HTML), стартова вкладка — «Групи».
+let launched: LaunchedApp;
 
 test.beforeAll(async () => {
-  // E2E=1 → main-процес пропускає завантаження DevTools-розширення (без мережі/флаку).
-  // ELECTRON_RUN_AS_NODE прибираємо: якщо воно лишиться в середовищі (деякі sandbox/CI
-  // його виставляють), Electron-бінарник стартує як чистий Node — без GUI/protocol,
-  // і Playwright не зможе підняти вікно. Видалення гарантує запуск повноцінного Electron.
-  const childEnv: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined && k !== 'ELECTRON_RUN_AS_NODE') childEnv[k] = v;
-  }
-  childEnv.E2E = '1';
-  app = await electron.launch({ args: ['.'], env: childEnv });
-  win = await app.firstWindow();
-  await win.waitForLoadState('domcontentloaded');
+  launched = await launchApp();
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(launched);
 });
 
-test('головне вікно відкривається з редактором Meet', async () => {
-  // <title>Meet</title> статично, hash-роут /editor виставляє "Meet — редактор" —
-  // обидва підходять під /Meet/. На URL не асертимо (роут у фрагменті #/editor).
+test('головне вікно відкривається з адмін-панеллю Meet', async () => {
+  const win = launched.win;
   await expect(win).toHaveTitle(/Meet/);
 
   // Vue змонтувався у #app і router-view щось відрендерив.
@@ -40,4 +25,20 @@ test('головне вікно відкривається з редакторо
   // Рендер віддається кастомним протоколом app:// (а не file://) — це і є «справжній» застосунок.
   const url = await win.evaluate(() => location.href);
   expect(url).toContain('app://meet/index.html');
+});
+
+test('хедер: лише зрозумілі кнопки перегляду, без лабораторії і download', async () => {
+  const win = launched.win;
+  const links = win.locator('.admin-head .links');
+  await expect(links.getByText('Початок зустрічі')).toBeVisible();
+  await expect(links.getByText('Кінець зустрічі')).toBeVisible();
+  await expect(links.getByText('Лабораторія')).toHaveCount(0);
+  await expect(links.getByText('HTML')).toHaveCount(0);
+});
+
+test('вкладки: Групи (стартова) / Генерації / Скріни / Налаштування / Промт', async () => {
+  const win = launched.win;
+  const tabs = win.locator('.tabs .tab');
+  await expect(tabs).toHaveText(['Групи', 'Генерації', 'Скріни', 'Налаштування', 'Промт']);
+  await expect(win.locator('.tab.active')).toHaveText('Групи');
 });

@@ -35,42 +35,6 @@ export function fmtDuration(sec: number): string {
   return (h ? `${h}г ` : '') + (m || h ? `${m}хв ` : '') + `${s}с`
 }
 
-export interface CollageResult {
-  left: string
-  right: string
-  split: 'vertical' | 'horizontal'
-}
-
-/**
- * Split a 2-up collage into start/end halves. Tall images (H/W>1.3) split
- * top/bottom (vertical), otherwise left/right (horizontal). Floor-based sizes;
- * the second half takes the remainder so odd dimensions don't drop a pixel.
- */
-export async function splitCollage(imageUrl: string): Promise<CollageResult> {
-  const img = new Image()
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve()
-    img.onerror = () => reject(new Error('не вдалось завантажити згенероване зображення'))
-    img.src = imageUrl
-  })
-  const W = img.naturalWidth
-  const H = img.naturalHeight
-  function crop(sx: number, sy: number, sw: number, sh: number): string {
-    const c = document.createElement('canvas')
-    c.width = sw
-    c.height = sh
-    c.getContext('2d')!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh)
-    return c.toDataURL('image/png')
-  }
-  const isTall = H / W > 1.3
-  if (isTall) {
-    const halfH = Math.floor(H / 2)
-    return { left: crop(0, 0, W, halfH), right: crop(0, halfH, W, H - halfH), split: 'vertical' }
-  }
-  const halfW = Math.floor(W / 2)
-  return { left: crop(0, 0, halfW, H), right: crop(halfW, 0, W - halfW, H), split: 'horizontal' }
-}
-
 /** "10:34 PM" → { time: "10:34", period: "PM" }; null if it doesn't match. */
 export function parseTime(str: string): { time: string; period: string } | null {
   const m = String(str).trim().match(/^(\d{1,2}:\d{2})\s*(AM|PM)$/i)

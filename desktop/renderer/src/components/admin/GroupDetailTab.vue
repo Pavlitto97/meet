@@ -1,0 +1,248 @@
+<template>
+  <section class="panel active">
+    <div class="toolbar">
+      <button class="secondary" @click="router.push('/admin/groups')"><span class="msym">arrow_back</span>Групи</button>
+      <h2 class="group-title"><span class="msym">group</span> {{ group?.name || '…' }}</h2>
+      <span v-if="group?.active" class="badge done">активна</span>
+      <button v-else-if="group" class="btn-sm" title="ця група піде у рендер і скріни" @click="activate"><span class="msym sm">check_circle</span>Активувати</button>
+      <span class="toolbar-right"></span>
+      <button :disabled="!withSourceCount" :title="withSourceCount ? `генерація для ${withSourceCount} учасн. з оригіналом` : 'спершу завантаж оригінальні фото'" @click="generateAll">
+        <span class="msym">auto_awesome</span>Згенерувати всім ({{ withSourceCount }})
+      </button>
+      <button @click="addParticipant"><span class="msym">person_add</span>Додати учасника</button>
+      <button class="secondary" @click="load"><span class="msym">refresh</span>Оновити</button>
+    </div>
+
+    <p class="hint" style="margin:0 0 16px">
+      <b>Оригінал</b> — фото, яке ти завантажуєш; саме з нього AI генерує кадри
+      <b>початку</b> та <b>кінця</b> зустрічі. Перегенерація завжди йде з оригіналу.
+    </p>
+
+    <table class="data">
+      <thead>
+        <tr>
+          <th style="width:88px">№</th>
+          <th style="width:120px">Оригінал</th>
+          <th style="width:170px">Початок / Кінець</th>
+          <th>Імʼя</th>
+          <th style="width:70px">Пропуск</th>
+          <th style="width:250px">Дії</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="(p, idx) in participants" :key="p.id" :class="{ skipped: p.skipped }">
+          <td>
+            <div class="num-cell">
+              <span class="rownum mono">{{ idx + 1 }}</span>
+              <div class="reorder">
+                <button class="iconbtn btn-sm" title="вище" :disabled="idx === 0" @click="move(idx, -1)"><span class="msym sm">arrow_upward</span></button>
+                <button class="iconbtn btn-sm" title="нижче" :disabled="idx >= participants.length - 1" @click="move(idx, 1)"><span class="msym sm">arrow_downward</span></button>
+              </div>
+            </div>
+          </td>
+          <td>
+            <div class="thumb-stack">
+              <img v-if="p.has_source" class="thumb tall" title="оригінал — клік: збільшити" :src="thumbSrc(p.id, 'source')" @click="openImage(p, 'source')" />
+              <button v-else class="thumb tall empty as-btn" title="завантажити оригінальне фото" @click="startUpload(p.id, 'source')"><span class="msym">add_photo_alternate</span></button>
+              <button class="iconbtn btn-sm" title="завантажити/замінити оригінал" @click="startUpload(p.id, 'source')"><span class="msym sm">upload</span></button>
+            </div>
+          </td>
+          <td>
+            <div class="flex" style="gap:6px">
+              <img v-if="p.has_avatar" class="thumb" title="початок зустрічі — клік: збільшити" :src="thumbSrc(p.id, 'start')" @click="openImage(p, 'start')" />
+              <span v-else class="thumb empty" title="початок: немає"></span>
+              <img v-if="p.has_avatar_end" class="thumb" title="кінець зустрічі — клік: збільшити" :src="thumbSrc(p.id, 'end')" @click="openImage(p, 'end')" />
+              <span v-else class="thumb empty" title="кінець: немає"></span>
+            </div>
+          </td>
+          <td>
+            <input class="i-name" :value="p.custom_name || ''" :placeholder="p.original_name || ''" @change="saveName(p.id, $event)" />
+            <div v-if="p.user_added" style="margin-top:4px"><span class="badge user">вручну</span></div>
+          </td>
+          <td style="text-align:center">
+            <input type="checkbox" class="i-skip" :checked="!!p.skipped" @change="saveSkip(p.id, $event)" />
+          </td>
+          <td>
+            <div class="flex" style="gap:4px">
+              <button class="gen-btn" :disabled="!!p.skipped || !p.has_source" :title="p.has_source ? 'згенерувати кадри початку/кінця з оригіналу' : 'спершу завантаж оригінал'" @click="generate(p)">
+                <span class="msym sm">auto_awesome</span> Генерувати
+              </button>
+              <button class="gen-btn" title="історія генерацій цього учасника" @click="router.push(`/admin/generations?participant=${p.id}`)">
+                <span class="msym sm">history</span>
+              </button>
+              <button class="iconbtn btn-sm" title="прибрати фото (оригінал + аватарки)" @click="clearImages(p)"><span class="msym sm">close</span></button>
+              <button v-if="p.user_added" class="iconbtn btn-sm danger" title="видалити" @click="del(p)"><span class="msym sm">delete</span></button>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <input ref="fileInput" type="file" accept="image/*" hidden @change="onFile" />
+  </section>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, inject, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { call } from '@/lib/api'
+import { fileToDataUrl } from '@/lib/util'
+import { useUiStore } from '@/stores/ui'
+import { AdminModalKey } from '@/components/admin/adminModal'
+import type { Group, Participant } from '@/types'
+
+const ui = useUiStore()
+const route = useRoute()
+const router = useRouter()
+const modal = inject(AdminModalKey)!
+
+const group = ref<Group | null>(null)
+const participants = ref<Participant[]>([])
+const bust = ref(Date.now())
+const pendingUpload = ref<{ id: number; kind: 'source' | 'start' } | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+
+const groupId = computed(() => parseInt(String(route.params.id), 10))
+const withSourceCount = computed(() => participants.value.filter((p) => p.has_source && !p.skipped).length)
+
+function thumbSrc(id: number, which: 'start' | 'end' | 'source'): string {
+  return `/api/avatar/${id}?which=${which}&t=${bust.value}`
+}
+
+async function load(): Promise<void> {
+  const [groupsList, list] = await Promise.all([
+    call<Group[]>('GET', '/api/groups'),
+    call<Participant[]>('GET', `/api/participants?group=${groupId.value}`),
+  ])
+  group.value = groupsList.find((g) => g.id === groupId.value) ?? null
+  if (!group.value) {
+    router.replace('/admin/groups')
+    return
+  }
+  participants.value = list
+  bust.value = Date.now()
+}
+
+async function activate(): Promise<void> {
+  await call('POST', `/api/groups/${groupId.value}/activate`)
+  ui.toast('Група тепер активна — рендер і скріни беруть її учасників', 'ok')
+  await load()
+}
+
+async function saveName(id: number, e: Event): Promise<void> {
+  const v = (e.target as HTMLInputElement).value
+  await call('PUT', `/api/participants/${id}`, { custom_name: v || null })
+  ui.toast('Збережено', 'ok')
+}
+
+async function saveSkip(id: number, e: Event): Promise<void> {
+  const checked = (e.target as HTMLInputElement).checked
+  await call('PUT', `/api/participants/${id}`, { skipped: checked ? 1 : 0 })
+  ui.toast('Збережено', 'ok')
+  await load()
+}
+
+async function move(idx: number, dir: -1 | 1): Promise<void> {
+  const order = participants.value.map((x) => x.id)
+  const j = idx + dir
+  if (j < 0 || j >= order.length) return
+  ;[order[idx], order[j]] = [order[j], order[idx]]
+  await call('POST', '/api/participants/reorder', { group_id: groupId.value, order })
+  await load()
+}
+
+function startUpload(id: number, kind: 'source' | 'start'): void {
+  pendingUpload.value = { id, kind }
+  fileInput.value?.click()
+}
+async function onFile(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  const pending = pendingUpload.value
+  if (!file || !pending) return
+  const dataUrl = await fileToDataUrl(file)
+  const body = pending.kind === 'source' ? { source_data_url: dataUrl } : { avatar_data_url: dataUrl }
+  await call('PUT', `/api/participants/${pending.id}`, body)
+  ui.toast(pending.kind === 'source' ? 'Оригінал завантажено — тепер можна генерувати' : 'Фото завантажено (початок)', 'ok')
+  pendingUpload.value = null
+  input.value = ''
+  await load()
+}
+
+async function generate(p: Participant): Promise<void> {
+  try {
+    const r = await call<{ id: number }>('POST', '/api/generate', { participant_id: p.id })
+    ui.toast(`Генерація #${r.id} стартувала — дивись вкладку «Генерації»`, 'ok')
+  } catch {
+    /* call() already toasted */
+  }
+}
+
+async function generateAll(): Promise<void> {
+  const targets = participants.value.filter((p) => p.has_source && !p.skipped)
+  if (!targets.length) return
+  const ok = await ui.confirm({
+    title: 'Згенерувати всім?',
+    message: `Стартує ${targets.length} AI-генерацій (по одній на учасника з оригіналом). Кожна коштує грошей.`,
+    okText: 'Генерувати',
+  })
+  if (!ok) return
+  let started = 0
+  for (const p of targets) {
+    try {
+      await call<{ id: number }>('POST', '/api/generate', { participant_id: p.id })
+      started++
+    } catch {
+      /* call() already toasted */
+    }
+  }
+  ui.toast(`Стартувало генерацій: ${started} — дивись вкладку «Генерації»`, 'ok')
+}
+
+async function clearImages(p: Participant): Promise<void> {
+  const ok = await ui.confirm({
+    title: 'Прибрати фото?',
+    message: `У «${p.custom_name || p.original_name}» буде прибрано оригінал і аватарки початку/кінця.`,
+    okText: 'Прибрати',
+    danger: true,
+  })
+  if (!ok) return
+  await call('PUT', `/api/participants/${p.id}`, { source_data_url: null, avatar_data_url: null, avatar_end_data_url: null })
+  ui.toast('Фото прибрано', 'ok')
+  await load()
+}
+
+async function del(p: Participant): Promise<void> {
+  const ok = await ui.confirm({
+    title: 'Видалити учасника?',
+    message: `«${p.custom_name || p.original_name}» буде видалено назавжди разом з генераціями.`,
+    okText: 'Видалити',
+    danger: true,
+  })
+  if (!ok) return
+  await call('DELETE', `/api/participants/${p.id}?hard=1`)
+  ui.toast('Видалено', 'ok')
+  await load()
+}
+
+async function addParticipant(): Promise<void> {
+  const name = await ui.prompt({ title: 'Новий учасник', label: 'Імʼя учасника', placeholder: 'напр. Олег', okText: 'Додати' })
+  if (!name || !name.trim()) return
+  await call('POST', '/api/participants', { group_id: groupId.value, custom_name: name.trim() })
+  ui.toast('Додано', 'ok')
+  await load()
+}
+
+const WHICH_LABEL: Record<string, string> = { source: 'оригінал', start: 'початок зустрічі', end: 'кінець зустрічі' }
+function openImage(p: Participant, which: 'source' | 'start' | 'end'): void {
+  modal.open({
+    title: `${p.custom_name || p.original_name} — ${WHICH_LABEL[which]}`,
+    imgSrc: thumbSrc(p.id, which),
+    actions: [{ label: 'Закрити', cls: 'secondary', onClick: () => modal.close() }],
+  })
+}
+
+watch(groupId, (v) => {
+  if (Number.isFinite(v)) void load()
+})
+onMounted(load)
+</script>

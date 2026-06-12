@@ -6,6 +6,7 @@
 import { BrowserWindow } from 'electron';
 import { all, one, run, logActivity, toBuffer } from './db';
 import { getSetting } from './settings';
+import { activeGroupId } from './groups';
 
 const MIN_W = 320;
 const MIN_H = 240;
@@ -93,7 +94,10 @@ export async function capture(
     }
   }
 
-  let url = `app://meet/api/render?which=${which}&fit=${w}x${h}`;
+  // Скрін знімається з активної групи (рендер сам бере activeGroupId, але
+  // фіксуємо id явно — щоб історія показувала, з якої групи зроблено кадр).
+  const groupId = activeGroupId();
+  let url = `app://meet/api/render?which=${which}&fit=${w}x${h}&group=${groupId}`;
   if (cam && cam !== '' && cam !== 'none') url += '&cam=' + encodeURIComponent(cam);
 
   const png = await capturePng(url, w, h);
@@ -102,24 +106,25 @@ export async function capture(
   const code = getSetting('meeting_code');
   const lbl = label && String(label).trim() !== '' ? String(label).trim() : null;
   const r = run(
-    'INSERT INTO screenshots(which, image, image_mime, width, height, meeting_code, label, size_bytes) VALUES(?,?,?,?,?,?,?,?)',
-    [which, png, 'image/png', w, h, code, lbl, png.length]
+    'INSERT INTO screenshots(which, image, image_mime, width, height, meeting_code, label, size_bytes, group_id) VALUES(?,?,?,?,?,?,?,?,?)',
+    [which, png, 'image/png', w, h, code, lbl, png.length, groupId]
   );
   const sid = r.lastInsertRowid;
-  logActivity('screenshot.capture', `#${sid} ${which} ${w}x${h} ${png.length}B`);
+  logActivity('screenshot.capture', `#${sid} ${which} ${w}x${h} ${png.length}B (група ${groupId})`);
   return { id: sid, which, width: w, height: h, size_bytes: png.length };
 }
 
 export function listScreenshots(which: string | null): any[] {
   let sql =
-    'SELECT id, which, image_mime, width, height, meeting_code, label, size_bytes, ' +
-    'created_at, (image IS NOT NULL) AS has_image FROM screenshots WHERE 1=1';
+    'SELECT s.id, s.which, s.image_mime, s.width, s.height, s.meeting_code, s.label, s.size_bytes, ' +
+    's.created_at, (s.image IS NOT NULL) AS has_image, s.group_id, g.name AS group_name ' +
+    'FROM screenshots s LEFT JOIN groups g ON g.id = s.group_id WHERE 1=1';
   const args: unknown[] = [];
   if (which === 'start' || which === 'end') {
-    sql += ' AND which = ?';
+    sql += ' AND s.which = ?';
     args.push(which);
   }
-  sql += ' ORDER BY id DESC LIMIT 200';
+  sql += ' ORDER BY s.id DESC LIMIT 200';
   return all(sql, args);
 }
 

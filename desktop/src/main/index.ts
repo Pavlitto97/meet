@@ -8,22 +8,54 @@ import { app, BrowserWindow, protocol } from 'electron';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import log from 'electron-log';
-import { envPath } from './services/paths';
+import { envPath, splashHtmlPath } from './services/paths';
 import { initDb } from './services/db';
+import { failOrphanedGenerations } from './services/generations';
 import { registerAppProtocol } from './protocol';
 import { initUpdater } from './updater';
 import './routes'; // side-effect: реєстрація всіх маршрутів
+
+// Ізольований userData для E2E/тестів: герметична БД, дев-дані не чіпаються.
+if (process.env.MEET_USERDATA) {
+  app.setPath('userData', process.env.MEET_USERDATA);
+}
 
 // Привілейований кастомний scheme мусить бути зареєстрований ДО app ready.
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
 ]);
 
-function createWindow(): BrowserWindow {
+// Сплеш видно щонайменше стільки, перш ніж зʼявиться головне вікно.
+const SPLASH_MIN_MS = 3000;
+
+/**
+ * Сплеш-прелоадер: маленьке frameless-вікно з resources/splash.html, показується
+ * миттєво при старті. Без preload і без доступу до Node (sandbox) — чистий статичний
+ * HTML через file:// (app:// на цей момент ще може бути не зареєстрований).
+ */
+function createSplash(): BrowserWindow {
+  const splash = new BrowserWindow({
+    width: 380,
+    height: 420,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: { sandbox: true, contextIsolation: true },
+  });
+  splash.once('ready-to-show', () => splash.show());
+  void splash.loadFile(splashHtmlPath());
+  return splash;
+}
+
+function createWindow(opts: { show?: boolean } = {}): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 880,
     backgroundColor: '#202124',
+    show: opts.show !== false,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -68,9 +100,24 @@ async function installDevtools(): Promise<void> {
 app.whenReady().then(async () => {
   dotenv.config({ path: envPath() }); // креди з .env (до initDb, що сидить ключ із env)
   log.info('Meet Editor starting', { version: app.getVersion(), packaged: app.isPackaged });
+  // Сплеш — одразу, ще до ініціалізації БД/протоколу. Під E2E вимкнено:
+  // Playwright чекає firstWindow() і сплеш ламав би тести (як і DevTools нижче).
+  const splash = process.env.E2E ? null : createSplash();
+  const splashShownAt = Date.now();
   registerAppProtocol();
   initDb();
-  const win = createWindow();
+  failOrphanedGenerations(); // pending без живого воркера → error (воркер inline у main)
+  const win = createWindow({ show: !splash });
+  if (splash) {
+    // Головне вікно показуємо, коли воно готове І сплеш провисів ≥ SPLASH_MIN_MS.
+    win.once('ready-to-show', () => {
+      const wait = Math.max(0, SPLASH_MIN_MS - (Date.now() - splashShownAt));
+      setTimeout(() => {
+        if (!splash.isDestroyed()) splash.destroy();
+        if (!win.isDestroyed()) win.show();
+      }, wait);
+    });
+  }
   // DevTools лише у локальному dev: не в проді, не під E2E/CI (де installExtension
   // тягнувся б у Chrome Web Store і гальмував/флакав запуск). Вікно вже створене —
   // installDevtools() без await, щоб не блокувати старт на мережі.

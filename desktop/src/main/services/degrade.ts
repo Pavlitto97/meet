@@ -149,6 +149,28 @@ export async function resizeToCover(bytes: Buffer, mime: string, tw: number, th:
   }
 }
 
+/**
+ * Source-зображення учасника зберігаємо «як є» — це оригінал для AI-генерацій.
+ * Єдиний виняток: дуже великі фото (понад MAX_SOURCE_PX по довшій стороні)
+ * пропорційно зменшуємо, щоб data:URL влазив у запит OpenRouter.
+ */
+const MAX_SOURCE_PX = 1600;
+export async function normalizeSourceImage(blob: Buffer, mime: string): Promise<[Buffer, string]> {
+  try {
+    const meta = await sharp(blob).metadata();
+    const w = meta.width ?? 0;
+    const h = meta.height ?? 0;
+    if (w < 1 || h < 1 || Math.max(w, h) <= MAX_SOURCE_PX) return [blob, mime];
+    const out = await sharp(blob)
+      .resize({ width: MAX_SOURCE_PX, height: MAX_SOURCE_PX, fit: 'inside' })
+      .jpeg({ quality: 92 })
+      .toBuffer();
+    return [out, 'image/jpeg'];
+  } catch {
+    return [blob, mime]; // битий/непідтримуваний формат — хай збережеться як є
+  }
+}
+
 /** Зменшення під плитку Meet при збереженні аватара (settings gen_resize/w/h). */
 export async function autoResizeForAvatar(blob: Buffer, mime: string): Promise<[Buffer, string]> {
   const s = getSettings(false);

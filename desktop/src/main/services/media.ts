@@ -18,11 +18,16 @@ export function blobToDataUrl(mime: string, blob: Buffer): string {
   return 'data:' + mime + ';base64,' + blob.toString('base64');
 }
 
-/** data: URL аватарки учасника (start|end). null якщо немає. */
-export function avatarDataUrl(participantId: string, which: 'start' | 'end' = 'start'): string | null {
-  const blobCol = which === 'end' ? 'avatar_end' : 'avatar';
-  const mimeCol = which === 'end' ? 'avatar_end_mime' : 'avatar_mime';
-  const row = one(`SELECT ${blobCol} AS blob, ${mimeCol} AS mime FROM participants WHERE device_id = ?`, [participantId]);
+const IMAGE_COLS: Record<string, [string, string]> = {
+  start: ['avatar', 'avatar_mime'],
+  end: ['avatar_end', 'avatar_end_mime'],
+  source: ['source', 'source_mime'],
+};
+
+/** data: URL зображення учасника (start|end|source) за числовим id. null якщо немає. */
+export function participantImageDataUrl(participantId: number, which: 'start' | 'end' | 'source' = 'start'): string | null {
+  const [blobCol, mimeCol] = IMAGE_COLS[which] ?? IMAGE_COLS.start;
+  const row = one(`SELECT ${blobCol} AS blob, ${mimeCol} AS mime FROM participants WHERE id = ?`, [participantId]);
   const blob = toBuffer(row?.blob);
   if (!row || blob === null || !row.mime) {
     return null;

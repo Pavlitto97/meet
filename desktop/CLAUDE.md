@@ -4,6 +4,13 @@
 вантажиться автоматично, коли працюєш у `desktop/`. Загальний контекст проєкту —
 у кореневому `../CLAUDE.md`.
 
+## Документація змін — ОБОВ'ЯЗКОВО
+
+Кожну суттєву зміну (нова фіча, зміна схеми БД/API/UI, видалення функціоналу)
+**документуй у `docs/CHANGELOG.md`** (новий запис зверху: що зроблено, навіщо,
+які файли, як перевірено). Це пряма вимога користувача — щоб потім можна було
+зрозуміти, які зміни проведені і який функціонал розроблений.
+
 ## Завжди дотримуйся при розробці цього додатку
 
 Коли пишеш/змінюєш код цього Electron-додатку, ОБОВʼЯЗКОВО тримайся двох джерел:
@@ -40,12 +47,15 @@
   Щоб розширення запрацювало, потрібен dev-флоу з рендером по http (vite dev server)
   + проксі `/api` — це окрема задача (перепис backend на HTTP у dev), поки не робимо.
 - **Playwright E2E** (`playwright.config.ts`, `e2e/*.spec.ts`): `npm run test:e2e`
-  (білд → `playwright test`). Тест піднімає ЗІБРАНИЙ застосунок через
-  `_electron.launch({args:['.']})` і перевіряє вікно/монтування Vue. Інсталятор НЕ
-  потрібен. ⚠️ Спека **прибирає `ELECTRON_RUN_AS_NODE`** із env запуску: якщо ця
-  змінна стоїть (деякі sandbox/CI її виставляють), electron-бінарник стартує як
-  чистий Node — без GUI/`protocol` — і запуск падає («bad option:
-  --remote-debugging-port» / `protocol undefined`). Видалення гарантує повноцінний Electron.
+  (білд → `playwright test`). Тести піднімають ЗІБРАНИЙ застосунок через спільний
+  хелпер `e2e/helpers.ts::launchApp()` — він створює **ізольований userData**
+  (tmp-тека → свіжа БД через env `MEET_USERDATA`, дев-дані не чіпаються) і
+  **прибирає `ELECTRON_RUN_AS_NODE`** із env запуску (інакше electron-бінарник
+  стартує як чистий Node без GUI/`protocol` і запуск падає). Спеки:
+  `smoke.spec.ts` (вікно/хедер/вкладки), `flows.spec.ts` (групи → учасники →
+  source-аплоад → рендер → скрін → налаштування; БЕЗ OpenRouter — грошей не
+  витрачає, безпечно на CI), `live-generation.spec.ts` (реальна AI-генерація,
+  **самопропускається** без `E2E_LIVE=1`; фото — env `E2E_LIVE_PHOTO=/шлях.jpg`).
 - **GitHub MCP** (user-scope, `~/.claude.json`): remote-HTTP сервер
   `https://api.githubcopilot.com/mcp/` з токеном `gh`. Дає Claude версіонування,
   PR-и, GitHub Actions/релізи прямо з сесії. Токен НЕ в репозиторії.
@@ -76,13 +86,46 @@
   Windows-авто-апдейт працює без підпису.
 - `.env` свідомо комітиться (рішення проєкту — креди в приватному репо).
 
+## Доменна модель (групи учасників + source-зображення)
+
+- **Групи** (`services/groups.ts`, таблиця `groups`): кілька іменованих складів
+  учасників. Кожна група має ВЛАСНІ 11 слотів плиток (`UNIQUE(group_id, device_id)`,
+  сід — `db.ts::seedGroupParticipants`). **Активна група** (settings
+  `active_group_id`, самолікується) — її учасників беруть `/api/render` і скріни;
+  явний оверрайд — `?group=N`. Останню групу видалити не можна.
+- **Учасник** адресується числовим `id` (НЕ device_id). Три зображення:
+  `source`(+`_mime`) — оригінальне фото, з якого генерує AI (зберігається як є,
+  лише страховий downscale >1600px у `degrade.ts::normalizeSourceImage`);
+  `avatar` — «початок»; `avatar_end` — «кінець» (обидва — downscale під плитку).
+  `GET /api/avatar/<id>?which=start|end|source`.
+- **Генерація** (`services/generations.ts`): вхід — ЗАВЖДИ source учасника
+  (без source → 400); знімок входу лягає в `generations.input_image` (прев'ю
+  «оригінал» в UI). Результат — 16:9-колаж «початок|кінець» (`resources/promt.md`).
+  **Approve** (`POST /api/generations/<id>/approve {side:both|start|end}`) ріже
+  колаж навпіл через sharp (широкий → ліво/право; високий h/w>1.3 → верх/низ),
+  зменшує під плитку і пише в avatar/avatar_end; генерація НЕ видаляється —
+  ставиться `approved_at` (єдина «застосована» на учасника; історія для порівняння).
+  **Regenerate** — ті ж параметри, але вхід перечитується з АКТУАЛЬНОГО source.
+- **Лабораторії деградації немає** (UI і degrade-* endpoints видалені). Сам
+  `services/degrade.ts` живий: авто-деградація генерацій (settings `gen_degrade*`),
+  resize-хелпери, cam-гейт рендеру (`?cam=`, дефолт none → байт-у-байт).
+- Міграція старої одногрупної схеми (device_id PK) — автоматична в
+  `db.ts::migrateParticipantsToGroups` (група №1, перешивка generations.participant_id).
+
 ## Структура
 
 - `src/main/` — main-процес (заміна server.php/router.php): `index.ts` (вхід, вікно,
-  DevTools), `protocol.ts` (`app://` → REST+статика), `http.ts`/`routes.ts` (роутер),
-  `services/*` (порти PHP-модулів: db/render/participants/generations/screenshots/…),
+  DevTools, `MEET_USERDATA`-оверрайд для тестів), `protocol.ts` (`app://` → REST+статика),
+  `http.ts`/`routes.ts` (роутер), `services/*` (db/groups/participants/generations/
+  render/screenshots/degrade/openrouter/settings/admin/media/paths/config),
   `updater.ts` (electron-updater).
 - `src/preload/index.ts` — місток у рендер (contextIsolation).
-- `renderer/` — Vue 3 + Vite SPA (hash-роутинг), білд у `renderer/dist`.
+- `renderer/` — Vue 3 + Vite SPA (hash-роутинг), білд у `renderer/dist`. Вкладки
+  адмінки: **Групи** (`GroupsTab` → `GroupDetailTab` — учасники групи з трьома
+  зображеннями Оригінал/Початок/Кінець), Генерації (фільтри група/учасник/статус,
+  бейджі групи + «застосовано», діплінк `?participant=N`), Скріни (з назвою групи),
+  Налаштування (окрема плашка «API-токени»), Промт. Хедер — лише «Перегляд
+  зустрічі: Початок/Кінець» (download HTML і лабораторію прибрано).
 - `resources/` — `index.html`(+`.bak`), `promt.md` (ship як extraResources).
-- `e2e/` — Playwright-тести. `out/` — компіляція main/preload. `dist/` — вивід electron-builder.
+- `e2e/` — Playwright-тести (`helpers.ts` + smoke/flows/live-generation).
+  `out/` — компіляція main/preload. `dist/` — вивід electron-builder.

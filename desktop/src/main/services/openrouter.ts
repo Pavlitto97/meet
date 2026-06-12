@@ -83,7 +83,8 @@ export async function callImage(
   provider: string,
   serviceTier: string,
   prompt: string,
-  inputImageDataUrl: string | null
+  inputImageDataUrl: string | null,
+  allowFallbacks = false
 ): Promise<any> {
   if (!model.toLowerCase().includes('image')) {
     throw new Error(
@@ -106,11 +107,19 @@ export async function callImage(
     payload.service_tier = serviceTier;
   }
   if (provider) {
-    payload.provider = { only: [provider], allow_fallbacks: false };
+    // allow_fallbacks=false → лише цей провайдер (точна воля користувача).
+    // allow_fallbacks=true  → цей провайдер першим, але OpenRouter може
+    // перемкнутись на інший, якщо цей rate-limited/недоступний (обхід 429).
+    payload.provider = allowFallbacks
+      ? { order: [provider], allow_fallbacks: true }
+      : { only: [provider], allow_fallbacks: false };
   }
+  // provider === '' → нічого не пінимо: OpenRouter сам маршрутизує по всіх
+  // доступних провайдерах моделі (максимально надійний шлях).
   const [status, resp] = await orRequest('POST', OPENROUTER_URL, orHeaders(apiKey), JSON.stringify(payload), 180);
   if (status < 200 || status >= 300) {
-    throw new Error(`OpenRouter HTTP ${status}: ${resp}`);
+    // OpenRouterHttpError несе код: 429/5xx ретраяться у runGeneration з бекофом.
+    throw new OpenRouterHttpError(status, resp);
   }
   return JSON.parse(resp || '{}');
 }

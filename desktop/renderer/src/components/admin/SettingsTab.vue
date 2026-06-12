@@ -11,10 +11,24 @@
       </div>
     </div>
 
+    <div class="card card-tokens">
+      <h3><span class="msym sm">key</span> API-токени</h3>
+      <div class="flex">
+        <div class="field" style="min-width:320px"><label for="s-key">OpenRouter API key</label>
+          <div class="input-with-btn">
+            <input id="s-key" v-model="apiKey" type="password" :placeholder="keyPlaceholder" :readonly="apiKeyLocked" :style="apiKeyLocked ? 'opacity:.6' : ''" autocomplete="off" spellcheck="false" @change="saveKey" />
+            <button v-if="apiKeyLocked" type="button" class="icon-btn" title="Замінити ключ" @click="unlockKey"><span class="msym">edit</span></button>
+          </div>
+        </div>
+        <div class="field"><label>Статус</label><span class="value" :class="apiKeyLocked ? 'status ok' : 'status err'">{{ apiKeyLocked ? 'ключ збережено' : 'ключ не задано' }}</span></div>
+        <div class="field"><label>Баланс</label><div class="flex"><span class="value mono">{{ balance }}</span><button type="button" class="iconbtn" title="оновити баланс" @click="refreshBalance"><span class="msym">refresh</span></button></div></div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">Токен зберігається лише в локальній базі додатку і нікуди, крім openrouter.ai, не передається. Без нього AI-генерація не працює.</p>
+    </div>
+
     <div class="card">
       <h3>AI-генерація (OpenRouter)</h3>
       <div class="flex">
-        <div class="field"><label for="s-key">API key</label><input id="s-key" v-model="apiKey" type="password" :placeholder="keyPlaceholder" :readonly="apiKeyLocked" :style="apiKeyLocked ? 'opacity:.6' : ''" autocomplete="off" spellcheck="false" @change="saveKey" /></div>
         <div class="field"><label for="s-model">Модель</label>
           <select id="s-model" v-model="genModel" @change="saveSetting('gen_model', genModel)">
             <option value="google/gemini-2.5-flash-image">gemini-2.5-flash-image</option>
@@ -27,7 +41,6 @@
         <div class="field"><label for="s-tier">Тариф</label>
           <select id="s-tier" v-model="genTier" @change="saveSetting('gen_tier', genTier)"><option value="flex">Flex · 0.5×</option><option value="default">Default · 1×</option><option value="priority">Priority · 1.8×</option></select>
         </div>
-        <div class="field"><label>Баланс</label><div class="flex"><span class="value mono">{{ balance }}</span><button type="button" class="iconbtn" @click="refreshBalance"><span class="msym">refresh</span></button></div></div>
       </div>
     </div>
 
@@ -123,6 +136,10 @@ async function saveKey(): Promise<void> {
   apiKey.value = ''
   apiKeyLocked.value = true
   ui.toast('Ключ збережено', 'ok')
+}
+function unlockKey(): void {
+  apiKeyLocked.value = false
+  apiKey.value = ''
 }
 async function refreshBalance(): Promise<void> {
   balance.value = '…'

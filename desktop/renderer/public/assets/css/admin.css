@@ -125,6 +125,7 @@ a:hover { text-decoration: underline; }
   transition: background-color var(--dur) var(--ease);
 }
 .admin-head .links a:hover { background: var(--primary-hover); text-decoration: none; }
+.admin-head .links .links-label { align-self: center; color: var(--muted); font-size: 13px; margin-right: 2px; }
 
 /* ─── Вкладки (Material Tabs) ──────────────────────────────────────────────────── */
 .tabs {
@@ -265,12 +266,41 @@ input[type=checkbox] { accent-color: var(--accent); width: 18px; height: 18px; c
 .badge {
   display: inline-flex; align-items: center; font-size: 11px; font-weight: 500;
   padding: 3px 10px; border-radius: var(--r-full); letter-spacing: .2px;
+  /* бейдж — цілісна пігулка: не переносить власний текст і не стискається флексом */
+  white-space: nowrap; flex: 0 0 auto;
 }
 .badge.skip    { color: var(--warn); background: var(--warn-container); }
 .badge.user    { color: var(--accent-dim); background: var(--info-bg); }
 .badge.done    { color: var(--ok); background: var(--ok-container); }
 .badge.err     { color: var(--err); background: var(--err-container); }
 .badge.pending { color: var(--accent); background: var(--info-bg); }
+.badge.group   { color: var(--accent-dim); background: var(--surface-2); border: 1px solid var(--outline-variant); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
+.badge.applied { color: var(--ok); background: var(--ok-container); }
+
+/* ─── Групи учасників ─────────────────────────────────────────────────────────── */
+.group-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+.group-card { cursor: pointer; }
+.group-card.is-active { border-color: var(--accent); }
+.group-card .group-ico { color: var(--muted); }
+.group-card.is-active .group-ico { color: var(--accent); }
+.group-card .group-name { font-size: 16px; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-stats { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+.group-stats span { display: inline-flex; align-items: center; gap: 5px; }
+.group-title { margin: 0; font-size: 18px; font-weight: 500; color: var(--text); text-transform: none; letter-spacing: 0; display: inline-flex; align-items: center; gap: 8px; }
+
+/* учасник: «оригінал» (портрет 3:4) + кнопка завантаження */
+.thumb.tall { width: 42px; height: 56px; }
+.thumb-stack { display: flex; align-items: center; gap: 6px; }
+img.thumb { cursor: zoom-in; }
+button.thumb.as-btn {
+  border: 1px dashed var(--outline); color: var(--muted); cursor: pointer; padding: 0;
+  border-radius: var(--r-sm); background-color: var(--surface-2); background-image: none;
+  transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+button.thumb.as-btn:hover { border-color: var(--accent); color: var(--accent); box-shadow: none; filter: none; }
+
+/* генерація, що зараз застосована як аватарки учасника */
+.slot.is-applied { border-color: var(--ok); }
 
 /* ─── Галереї (генерації / скріни) ────────────────────────────────────────────── */
 .gen-gallery  { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
@@ -282,8 +312,9 @@ input[type=checkbox] { accent-color: var(--accent); width: 18px; height: 18px; c
 }
 .slot:hover { box-shadow: var(--elev-1); border-color: var(--outline); }
 .slot.busy { outline: 2px solid var(--accent); }
-.queue-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.queue-head strong { font-weight: 500; }
+.queue-head { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+/* імʼя забирає гнучке місце і переноситься саме — бейджі лишаються цілісними пігулками */
+.queue-head strong { font-weight: 500; flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .preview {
   width: 100%; aspect-ratio: 1 / 1; border-radius: var(--r-sm); overflow: hidden;
   background: var(--surface-2) url("../img/placeholder.svg") center/40% no-repeat; cursor: zoom-in;
@@ -300,12 +331,15 @@ input[type=checkbox] { accent-color: var(--accent); width: 18px; height: 18px; c
 .shot-card .original { font-size: 11px; }
 .original { font-size: 12px; color: var(--muted); word-break: break-word; line-height: 1.4; }
 .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.row .gen-btn {
-  flex: 1; background: var(--info-bg); color: var(--accent-dim); border: none;
+.gen-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  background: var(--info-bg); color: var(--accent-dim); border: none;
   font-size: 12px; padding: 8px 10px; border-radius: var(--r-sm); cursor: pointer; font-family: var(--font);
   transition: background-color var(--dur) var(--ease);
 }
-.row .gen-btn:hover { background: #294c75; }
+.gen-btn:hover { background: #294c75; box-shadow: none; filter: none; }
+.gen-btn:disabled { opacity: .38; cursor: default; }
+.row .gen-btn { flex: 1; }
 .variant-pill { font-size: 10px; color: var(--warn); background: var(--warn-container); padding: 2px 8px; border-radius: var(--r-full); }
 
 /* лінійний індикатор (Material linear progress, indeterminate) */
@@ -362,6 +396,40 @@ input[type=checkbox] { accent-color: var(--accent); width: 18px; height: 18px; c
 .modal .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .modal .modal-actions button.reject { background: var(--danger-bg); color: var(--danger-fg); }
 .modal .modal-actions button.reject:hover { background: #5a2a2a; }
+
+/* ─── Кроп-модалка (ручне виділення області генерації) ───────────────────────── */
+.modal.crop-modal { max-width: 940px; }
+.crop-modal h3 { display: flex; align-items: center; gap: 8px; }
+.crop-hint { margin: -6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.crop-stage-wrap { display: flex; justify-content: center; background: #1a1a1c; border-radius: var(--r-md); padding: 12px; }
+.crop-stage { position: relative; display: inline-block; line-height: 0; cursor: crosshair; user-select: none; overflow: hidden; }
+.crop-stage img { max-width: 100%; max-height: 58vh; display: block; }
+.crop-rect {
+  position: absolute; cursor: move; z-index: 2;
+  border: 2px dashed var(--accent);
+  /* затемнюємо все ПОЗА виділенням (stage має overflow:hidden) */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .55);
+}
+.crop-h {
+  position: absolute; width: 12px; height: 12px; background: var(--accent);
+  border: 2px solid var(--on-primary); border-radius: 3px; z-index: 3;
+}
+.crop-h-nw { left: -7px; top: -7px; cursor: nwse-resize; }
+.crop-h-ne { right: -7px; top: -7px; cursor: nesw-resize; }
+.crop-h-sw { left: -7px; bottom: -7px; cursor: nesw-resize; }
+.crop-h-se { right: -7px; bottom: -7px; cursor: nwse-resize; }
+.crop-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.crop-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.crop-size { margin-left: auto; font-size: 12px; }
+.crop-empty-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #fff; font-size: 14px; font-weight: 500; text-align: center; padding: 16px;
+  background: rgba(0, 0, 0, .35); pointer-events: none; line-height: 1.4;
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+}
+.crop-confirm { align-items: center; }
+.crop-confirm .crop-confirm-label { font-size: 13px; color: var(--text); margin-left: auto; }
+.crop-confirm .crop-confirm-label.muted { color: var(--muted); }
 
 /* компактний діалог (prompt/confirm — заміна нативних) */
 .modal.modal-sm { max-width: 440px; gap: 16px; }

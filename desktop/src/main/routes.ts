@@ -1,12 +1,10 @@
 /**
- * Реєстрація всіх маршрутів (порт meeteditor/routes.php). Ядро (settings, prompt,
- * participants, avatar, render, degrade, credits) — портоване повністю.
- * Генерації/скріни/адмін: читання з БД працює, важкі дії (генерація, capture,
- * адмін-агрегати) — 501-стаби до наступного кроку порту.
+ * Реєстрація всіх маршрутів. Кожен хендлер тонкий — делегує у сервісний модуль.
+ * Учасники адресуються числовим id і живуть у групах (services/groups).
  */
 import fs from 'node:fs';
 import { route, MeetResponse, type MeetRequest } from './http';
-import { all, one, run, toBuffer } from './services/db';
+import { all, run } from './services/db';
 import { promptFile } from './services/paths';
 import { getSettings, updateSettings, getSetting } from './services/settings';
 import {
@@ -15,10 +13,11 @@ import {
   updateParticipant,
   deleteParticipant,
   reorder,
-  avatarBlob,
+  participantImage,
+  type ImageWhich,
 } from './services/participants';
+import { listGroups, createGroup, renameGroup, deleteGroup, activateGroup, resolveGroupId } from './services/groups';
 import { renderMeet } from './services/render';
-import { degradeMethods, parseCam, camSpec, camLayer, degradeBlob } from './services/degrade';
 import { fetchCredits, OpenRouterHttpError } from './services/openrouter';
 import {
   createGeneration,
@@ -26,6 +25,7 @@ import {
   generationImage,
   generationInput,
   approveGeneration,
+  cropGeneration,
   regenerate,
   deleteGeneration,
   bulkDeleteGenerations,
@@ -49,9 +49,9 @@ import {
 } from './services/admin';
 import { dbPath } from './services/paths';
 
-const reqDid = (r: MeetRequest) => decodeURIComponent(r.params.did);
 const binOrNull = (res: [Buffer, string] | null, headers: Record<string, string> = { 'Cache-Control': 'no-store' }) =>
   res ? new MeetResponse(200, res[0], res[1], headers) : MeetResponse.text('no image', 404);
+const intParam = (r: MeetRequest, name: string) => parseInt(r.params[name], 10);
 
 // ─── Налаштування ─────────────────────────────────────────────────────────────
 route('GET', '/api/settings', () => getSettings());
@@ -79,18 +79,40 @@ route('DELETE', '/api/prompt/presets/(?<pid>\\d+)', (r) => {
   return { ok: true };
 });
 
-// ─── Учасники ─────────────────────────────────────────────────────────────────
-route('GET', '/api/participants', () => listParticipants());
-route('POST', '/api/participants/reorder', (r) => reorder(r.json().order ?? null));
-route('POST', '/api/participants', (r) => createParticipant(r.json()));
-route('PUT', '/api/participants/(?<did>.+)', (r) => updateParticipant(reqDid(r), r.json()));
-route('DELETE', '/api/participants/(?<did>.+)', (r) => {
-  const hard = ['1', 'true'].includes(String(r.q('hard', '0')));
-  return deleteParticipant(reqDid(r), hard);
+// ─── Групи ────────────────────────────────────────────────────────────────────
+route('GET', '/api/groups', () => listGroups());
+route('POST', '/api/groups', (r) => createGroup(r.json()));
+route('PUT', '/api/groups/(?<gid>\\d+)', (r) => renameGroup(intParam(r, 'gid'), r.json()));
+route('DELETE', '/api/groups/(?<gid>\\d+)', (r) => deleteGroup(intParam(r, 'gid')));
+route('POST', '/api/groups/(?<gid>\\d+)/activate', (r) => activateGroup(intParam(r, 'gid')));
+
+// ─── Учасники (в межах групи; ?group= або активна) ────────────────────────────
+route('GET', '/api/participants', (r) => {
+  const gid = resolveGroupId(r.q('group'));
+  if (typeof gid !== 'number') return gid;
+  return listParticipants(gid);
 });
-route('GET', '/api/avatar/(?<did>.+)', (r) => {
-  const which = r.q('which', 'start') === 'end' ? 'end' : 'start';
-  const res = avatarBlob(reqDid(r), which);
+route('POST', '/api/participants/reorder', (r) => {
+  const b = r.json();
+  const gid = resolveGroupId(b.group_id);
+  if (typeof gid !== 'number') return gid;
+  return reorder(gid, b.order ?? null);
+});
+route('POST', '/api/participants', (r) => {
+  const b = r.json();
+  const gid = resolveGroupId(b.group_id);
+  if (typeof gid !== 'number') return gid;
+  return createParticipant(gid, b);
+});
+route('PUT', '/api/participants/(?<pid>\\d+)', (r) => updateParticipant(intParam(r, 'pid'), r.json()));
+route('DELETE', '/api/participants/(?<pid>\\d+)', (r) => {
+  const hard = ['1', 'true'].includes(String(r.q('hard', '0')));
+  return deleteParticipant(intParam(r, 'pid'), hard);
+});
+route('GET', '/api/avatar/(?<pid>\\d+)', (r) => {
+  const raw = String(r.q('which', 'start'));
+  const which: ImageWhich = raw === 'end' || raw === 'source' ? raw : 'start';
+  const res = participantImage(intParam(r, 'pid'), which);
   if (!res) return MeetResponse.text('no avatar', 404);
   return new MeetResponse(200, res[0], res[1], { 'Cache-Control': 'no-store' });
 });
@@ -100,35 +122,11 @@ route('GET', '/api/render', async (r) => {
   const which = String(r.q('which', 'start'));
   const fit = r.q('fit');
   const cam = r.q('cam');
-  const html = await renderMeet(which, fit || null, cam || null);
+  const group = r.q('group');
+  const html = await renderMeet(which, fit || null, cam || null, group || null);
   const headers: Record<string, string> = {};
   if (r.q('download')) headers['Content-Disposition'] = `attachment; filename="meet-${which}.html"`;
   return new MeetResponse(200, html, 'text/html; charset=utf-8', headers);
-});
-
-// ─── Webcam-деградація ──────────────────────────────────────────────────────────
-route('GET', '/api/degrade-methods', () => ({ methods: degradeMethods() }));
-route('GET', '/api/degrade-spec', (r) => {
-  const p = parseCam(r.q('cam'));
-  const spec = camSpec(p.method, p.intensity);
-  return { method: p.method, intensity: p.intensity, layer: camLayer(p.method), filter: spec.filter, svg: spec.svg };
-});
-route('GET', '/api/degrade-preview', async (r) => {
-  const which = r.q('which', 'start') === 'end' ? 'end' : 'start';
-  const gid = r.q('gid');
-  let res: [Buffer, string] | null = null;
-  if (gid) {
-    const row = one('SELECT image AS blob, image_mime AS mime FROM generations WHERE id = ?', [parseInt(gid, 10)]);
-    const b = toBuffer(row?.blob);
-    res = row && b && row.mime ? [b, row.mime] : null;
-  } else {
-    const did = r.q('did');
-    res = did ? avatarBlob(decodeURIComponent(did), which) : null;
-  }
-  if (!res) return MeetResponse.text('no image', 404);
-  const p = parseCam(r.q('cam'));
-  const [blob, mime] = await degradeBlob(res[0], res[1], p.method, p.intensity);
-  return new MeetResponse(200, blob, mime, { 'Cache-Control': 'no-store' });
 });
 
 // ─── OpenRouter ───────────────────────────────────────────────────────────────
@@ -144,14 +142,27 @@ route('GET', '/api/credits', async () => {
 });
 
 // ─── Генерації ────────────────────────────────────────────────────────────────
-route('GET', '/api/generations', (r) => listGenerations(r.q('participant_id'), r.q('status')));
+route('GET', '/api/generations', (r) => listGenerations(r.q('participant_id'), r.q('status'), r.q('group')));
 route('POST', '/api/generate', (r) => createGeneration(r.json()));
-route('GET', '/api/generation-image/(?<gid>\\d+)', (r) => binOrNull(generationImage(parseInt(r.params.gid, 10))));
-route('GET', '/api/generation-input/(?<gid>\\d+)', (r) => binOrNull(generationInput(parseInt(r.params.gid, 10))));
-route('POST', '/api/generations/(?<gid>\\d+)/approve', (r) => approveGeneration(parseInt(r.params.gid, 10), r.json().which === 'end' ? 'end' : 'start'));
-route('POST', '/api/generations/(?<gid>\\d+)/regenerate', (r) => regenerate(parseInt(r.params.gid, 10)));
+route('GET', '/api/generation-image/(?<gid>\\d+)', (r) => binOrNull(generationImage(intParam(r, 'gid'))));
+route('GET', '/api/generation-input/(?<gid>\\d+)', (r) => binOrNull(generationInput(intParam(r, 'gid'))));
+route('POST', '/api/generations/(?<gid>\\d+)/approve', (r) => {
+  const raw = String(r.json().side ?? 'both');
+  const side = raw === 'start' || raw === 'end' ? raw : 'both';
+  return approveGeneration(intParam(r, 'gid'), side);
+});
+route('POST', '/api/generations/(?<gid>\\d+)/crop', (r) => {
+  const b = r.json();
+  const which = b.which === 'end' ? 'end' : 'start';
+  const rect = { x: Number(b.x), y: Number(b.y), width: Number(b.width), height: Number(b.height) };
+  if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) {
+    return { error: 'x/y/width/height мають бути числами', _status: 400 };
+  }
+  return cropGeneration(intParam(r, 'gid'), which, rect);
+});
+route('POST', '/api/generations/(?<gid>\\d+)/regenerate', (r) => regenerate(intParam(r, 'gid')));
 route('POST', '/api/generations/bulk-delete', (r) => bulkDeleteGenerations(String(r.json().scope ?? '')));
-route('DELETE', '/api/generations/(?<gid>\\d+)', (r) => deleteGeneration(parseInt(r.params.gid, 10)));
+route('DELETE', '/api/generations/(?<gid>\\d+)', (r) => deleteGeneration(intParam(r, 'gid')));
 
 // ─── Скріни (webContents.capturePage) ───────────────────────────────────────────
 route('POST', '/api/screenshots', (r) => {

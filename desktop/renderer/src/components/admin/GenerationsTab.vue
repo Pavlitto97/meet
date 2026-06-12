@@ -2,16 +2,23 @@
   <section class="panel active">
     <div class="toolbar">
       <button class="secondary" @click="load"><span class="msym">refresh</span>Оновити</button>
+      <select v-model="filterGroup" class="btn-sm" style="border-radius:16px;padding:8px 12px" @change="onGroupFilter">
+        <option value="">усі групи</option>
+        <option v-for="g in groups" :key="g.id" :value="String(g.id)">{{ g.name }}</option>
+      </select>
+      <select v-model="filterParticipant" class="btn-sm" style="border-radius:16px;padding:8px 12px" @change="load">
+        <option value="">усі учасники</option>
+        <option v-for="p in filterParticipants" :key="p.id" :value="String(p.id)">{{ p.custom_name || p.original_name }}</option>
+      </select>
       <select v-model="filterStatus" class="btn-sm" style="border-radius:16px;padding:8px 12px" @change="load">
         <option value="">усі статуси</option>
-        <option value="done">done</option>
-        <option value="pending">pending</option>
-        <option value="error">error</option>
+        <option value="done">готові</option>
+        <option value="pending">в обробці</option>
+        <option value="error">помилки</option>
       </select>
       <span class="toolbar-right"></span>
       <button v-show="hasError" class="danger btn-sm" @click="bulkDel('error', 'усі генерації-помилки')"><span class="msym sm">delete</span>Видалити всі помилки</button>
-      <button v-show="hasDone" class="danger btn-sm" @click="bulkDel('done', 'усі готові генерації')"><span class="msym sm">delete</span>Видалити всі done</button>
-      <button v-show="generations.length" class="danger btn-sm" @click="bulkDel('all', 'ВСЮ чергу генерацій')"><span class="msym sm">delete</span>Очистити чергу</button>
+      <button v-show="generations.length" class="danger btn-sm" @click="bulkDel('all', 'ВСЮ історію генерацій')"><span class="msym sm">delete</span>Очистити історію</button>
     </div>
 
     <div class="stat-grid compact" style="margin-bottom:16px">
@@ -21,10 +28,12 @@
     </div>
 
     <div class="gen-gallery">
-      <div v-for="g in generations" :key="g.id" class="slot" :data-gid="g.id">
+      <div v-for="g in generations" :key="g.id" class="slot" :class="{ 'is-applied': g.approved_at }" :data-gid="g.id">
         <div class="queue-head">
+          <span v-if="g.group_name" class="badge group" :title="`група: ${g.group_name}`">{{ g.group_name }}</span>
           <strong>{{ g.participant_name || '—' }}</strong>
           <span class="badge" :class="badge(g).cls">{{ badge(g).label }}</span>
+          <span v-if="g.approved_at" class="badge applied" title="цей колаж зараз стоїть аватарками учасника">застосовано</span>
           <span v-if="g.degrade_pct != null" class="badge user" title="авто-деградація кодеком">кодек {{ g.degrade_pct }}%</span>
         </div>
 
@@ -37,13 +46,13 @@
           </figure>
           <span class="msym gen-arrow">arrow_forward</span>
           <figure class="gen-shot">
-            <figcaption>результат</figcaption>
-            <div class="preview sm" @click="openGenModal(g)">
+            <figcaption>початок | кінець</figcaption>
+            <div class="preview sm" :title="g.status === 'done' && g.has_image ? 'відкрити: виділити область і підтвердити кроп' : ''" @click="openResult(g)">
               <img v-if="g.has_image" :src="`/api/generation-image/${g.id}?t=${genBust}`" />
             </div>
           </figure>
         </div>
-        <div v-else class="preview" @click="openGenModal(g)">
+        <div v-else class="preview" @click="openResult(g)">
           <img v-if="g.has_image" :src="`/api/generation-image/${g.id}?t=${genBust}`" />
         </div>
 
@@ -52,8 +61,9 @@
         <div v-else class="original">{{ metaStr(g) }}</div>
 
         <div v-if="g.status === 'done' && g.has_image" class="row">
-          <button class="gen-btn" @click="approveSplit(g)"><span class="msym sm">content_cut</span> Розрізати</button>
-          <button class="gen-btn" title="нова картинка з того ж оригіналу й промту" @click="regen(g)"><span class="msym sm">autorenew</span> Перегенерувати</button>
+          <button class="gen-btn" title="розрізати колаж і поставити аватарками початку та кінця" @click="apply(g)"><span class="msym sm">done_all</span> Застосувати</button>
+          <button class="gen-btn" title="вручну виділити область для початку/кінця (зрізати білі рамки)" @click="cropGen = g"><span class="msym sm">crop</span> Кроп</button>
+          <button class="gen-btn" title="нова генерація з оригінального фото учасника" @click="regen(g)"><span class="msym sm">autorenew</span> Перегенерувати</button>
           <button class="iconbtn btn-sm danger" title="видалити" @click="del(g)"><span class="msym sm">delete</span></button>
         </div>
         <div v-else-if="g.status === 'error'" class="row">
@@ -63,28 +73,36 @@
       </div>
     </div>
 
-    <p v-show="!generations.length" class="muted">Генерацій немає. Запусти <span class="msym sm">auto_awesome</span> зі вкладки «Учасники».</p>
+    <p v-show="!generations.length" class="muted">Генерацій немає. Зайди у групу і натисни <span class="msym sm">auto_awesome</span> «Генерувати» в учасника з оригінальним фото.</p>
   </section>
+
+  <CropModal :gen="cropGen" @close="cropGen = null" @applied="onCropped" />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, inject, onMounted, onBeforeUnmount } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { call } from '@/lib/api'
-import { splitCollage } from '@/lib/util'
 import { useUiStore } from '@/stores/ui'
 import { AdminModalKey } from '@/components/admin/adminModal'
-import type { Generation } from '@/types'
+import CropModal from '@/components/admin/CropModal.vue'
+import type { Generation, Group, Participant } from '@/types'
 
 const ui = useUiStore()
-const ENC = encodeURIComponent
+const route = useRoute()
+const router = useRouter()
 const modal = inject(AdminModalKey)!
 
 const generations = ref<Generation[]>([])
+const cropGen = ref<Generation | null>(null)
+const groups = ref<Group[]>([])
+const filterParticipants = ref<Participant[]>([])
 const filterStatus = ref('')
+const filterGroup = ref('')
+const filterParticipant = ref('')
 const genBust = ref(Date.now())
 
 const hasError = computed(() => generations.value.some((g) => g.status === 'error'))
-const hasDone = computed(() => generations.value.some((g) => g.status === 'done'))
 
 const stats = computed(() => {
   const list = generations.value
@@ -116,6 +134,23 @@ function metaStr(g: Generation): string {
     .join(' · ')
 }
 
+// ── filters ──
+async function loadGroups(): Promise<void> {
+  groups.value = await call<Group[]>('GET', '/api/groups')
+}
+async function loadFilterParticipants(): Promise<void> {
+  if (!filterGroup.value) {
+    filterParticipants.value = []
+    return
+  }
+  filterParticipants.value = await call<Participant[]>('GET', `/api/participants?group=${filterGroup.value}`)
+}
+async function onGroupFilter(): Promise<void> {
+  filterParticipant.value = ''
+  await loadFilterParticipants()
+  await load()
+}
+
 // ── poll ──
 let timer: ReturnType<typeof setInterval> | null = null
 function startPoll(): void {
@@ -130,7 +165,12 @@ function stopPoll(): void {
 }
 
 async function load(): Promise<void> {
-  const list = await call<Generation[]>('GET', '/api/generations' + (filterStatus.value ? `?status=${filterStatus.value}` : ''))
+  const q = new URLSearchParams()
+  if (filterStatus.value) q.set('status', filterStatus.value)
+  if (filterGroup.value) q.set('group', filterGroup.value)
+  if (filterParticipant.value) q.set('participant_id', filterParticipant.value)
+  const qs = q.toString()
+  const list = await call<Generation[]>('GET', '/api/generations' + (qs ? `?${qs}` : ''))
   generations.value = list
   genBust.value = Date.now()
   if (!list.some((g) => g.status === 'pending')) stopPoll()
@@ -143,18 +183,26 @@ async function del(g: Generation): Promise<void> {
 }
 async function regen(g: Generation): Promise<void> {
   const r = await call<{ id: number }>('POST', `/api/generations/${g.id}/regenerate`)
-  ui.toast(`Перегенерація #${r.id} — з того ж оригіналу`, 'ok')
+  ui.toast(`Перегенерація #${r.id} — з оригінального фото учасника`, 'ok')
   startPoll()
+  await load()
 }
-async function approveSplit(g: Generation): Promise<void> {
-  if (!g.participant_id) {
-    ui.toast('Генерація не привʼязана до учасника', 'err')
-    return
-  }
-  const { left, right, split } = await splitCollage(`/api/generation-image/${g.id}?t=${Date.now()}`)
-  await call('PUT', `/api/participants/${ENC(g.participant_id)}`, { avatar_data_url: left, avatar_end_data_url: right })
-  await call('DELETE', `/api/generations/${g.id}`)
-  ui.toast(split === 'vertical' ? 'Розрізано: верх→початок, низ→кінець' : 'Розрізано: ліве→початок, праве→кінець', 'ok')
+/** Сервер ріже колаж навпіл і пише аватарки. side: both|start|end. */
+async function apply(g: Generation, side: 'both' | 'start' | 'end' = 'both'): Promise<void> {
+  await call('POST', `/api/generations/${g.id}/approve`, { side })
+  ui.toast(
+    side === 'both'
+      ? 'Застосовано: ліва половина → початок, права → кінець'
+      : side === 'start'
+        ? 'Застосовано лише початок (ліва половина)'
+        : 'Застосовано лише кінець (права половина)',
+    'ok'
+  )
+  await load()
+}
+// Кроп застосовано: оновлюємо список (бейдж «застосовано»), модалку НЕ закриваємо —
+// типовий сценарій: вирізати початок, посунути рамку, вирізати кінець.
+async function onCropped(): Promise<void> {
   await load()
 }
 async function bulkDel(scope: 'error' | 'done' | 'all', label: string): Promise<void> {
@@ -169,14 +217,21 @@ async function bulkDel(scope: 'error' | 'done' | 'all', label: string): Promise<
 function openImageModal(title: string, src: string): void {
   modal.open({ title, imgSrc: src, actions: [{ label: 'Закрити', cls: 'secondary', onClick: () => modal.close() }] })
 }
+/** Клік по згенерованому зображенню: готове → кроп-в'юер (виділити область і
+ *  підтвердити «початок»/«кінець»); інакше — звичайна модалка (помилка/мета). */
+function openResult(g: Generation): void {
+  if (g.status === 'done' && g.has_image) cropGen.value = g
+  else openGenModal(g)
+}
 function openGenModal(g: Generation): void {
   const meta = [
+    g.group_name ? `група: ${g.group_name}` : '',
+    g.participant_name ? `учасник: ${g.participant_name}` : '',
     `модель: ${g.model}`,
     `провайдер: ${g.provider}`,
     `тариф: ${g.service_tier}`,
     g.cost_usd != null ? `$${Number(g.cost_usd).toFixed(5)}` : '',
-    g.prompt_tokens ? `tokens in: ${g.prompt_tokens}` : '',
-    g.output_tokens ? `tokens out: ${g.output_tokens}` : '',
+    g.approved_at ? 'застосовано до учасника' : '',
   ].filter(Boolean)
 
   const actions = [
@@ -191,49 +246,19 @@ function openGenModal(g: Generation): void {
       },
     },
   ]
-  if (g.status === 'done' && g.has_image && g.participant_id) {
-    actions.push({
-      label: '→ Початок',
-      cls: 'secondary',
-      onClick: async () => {
-        await call('POST', `/api/generations/${g.id}/approve`, { which: 'start' })
-        modal.close()
-        ui.toast('Прийнято як аватар (початок)', 'ok')
-        await load()
-      },
-    })
-    actions.push({
-      label: '→ Кінець',
-      cls: 'secondary',
-      onClick: async () => {
-        await call('POST', `/api/generations/${g.id}/approve`, { which: 'end' })
-        modal.close()
-        ui.toast('Прийнято як аватар (кінець)', 'ok')
-        await load()
-      },
-    })
-    actions.push({
-      label: 'Розрізати (початок + кінець)',
-      cls: '',
-      onClick: async () => {
-        await approveSplit(g)
-        modal.close()
-      },
-    })
-  } else if (g.status === 'error') {
+  if (g.status === 'error') {
     actions.push({
       label: 'Повторити',
       cls: '',
       onClick: async () => {
-        await call('POST', `/api/generations/${g.id}/regenerate`)
+        await regen(g)
         modal.close()
-        startPoll()
       },
     })
   }
 
   modal.open({
-    title: 'Перегляд генерації',
+    title: `Генерація #${g.id}`,
     imgSrc: g.has_image ? `/api/generation-image/${g.id}?t=${genBust.value}` : undefined,
     meta,
     actions,
@@ -241,6 +266,29 @@ function openGenModal(g: Generation): void {
 }
 
 onMounted(async () => {
+  // Підтримка діплінка /admin/generations?participant=N (з картки учасника).
+  const qPid = String(route.query.participant ?? '')
+  const qGroup = String(route.query.group ?? '')
+  await loadGroups()
+  if (qPid) {
+    filterParticipant.value = qPid
+    // Знайти групу учасника, щоб селект учасників мав опції.
+    if (!qGroup) {
+      for (const g of groups.value) {
+        const ps = await call<Participant[]>('GET', `/api/participants?group=${g.id}`)
+        if (ps.some((p) => String(p.id) === qPid)) {
+          filterGroup.value = String(g.id)
+          filterParticipants.value = ps
+          break
+        }
+      }
+    }
+  }
+  if (qGroup) {
+    filterGroup.value = qGroup
+    await loadFilterParticipants()
+  }
+  if (qPid || qGroup) void router.replace({ query: {} })
   await load()
   startPoll()
 })

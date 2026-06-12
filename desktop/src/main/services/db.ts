@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { dbPath, promptFile, promptSeedPath } from './paths';
-import { DEFAULT_SETTINGS, defaultParticipants } from './config';
+import { DEFAULT_SETTINGS, DEFAULT_GROUP_NAME, defaultParticipants } from './config';
 
 let _db: DatabaseSync | null = null;
 
@@ -56,14 +56,23 @@ function ensureColumn(table: string, column: string, ddl: string): void {
   }
 }
 
-/** Створює таблиці, лагідні міграції, заливає дефолти. Ідемпотентно. */
-export function initDb(): void {
-  const con = db();
-  con.exec(`
+function tableExists(name: string): boolean {
+  return !!one("SELECT name FROM sqlite_master WHERE type='table' AND name = ?", [name]);
+}
+
+function tableHasColumn(table: string, column: string): boolean {
+  return all(`PRAGMA table_info(${table})`).some((r) => r.name === column);
+}
+
+const PARTICIPANTS_DDL = `
     CREATE TABLE IF NOT EXISTS participants (
-      device_id       TEXT PRIMARY KEY,
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id        INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+      device_id       TEXT NOT NULL,
       original_name   TEXT NOT NULL,
       custom_name     TEXT,
+      source          BLOB,
+      source_mime     TEXT,
       avatar          BLOB,
       avatar_mime     TEXT,
       avatar_end      BLOB,
@@ -71,12 +80,78 @@ export function initDb(): void {
       skipped         INTEGER NOT NULL DEFAULT 0,
       position        INTEGER NOT NULL,
       user_added      INTEGER NOT NULL DEFAULT 0,
-      updated_at      TEXT DEFAULT CURRENT_TIMESTAMP
+      updated_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(group_id, device_id)
+    )
+`;
+
+/** Сідить дефолтних учасників (плитки збереженої сторінки Meet) у групу. */
+export function seedGroupParticipants(groupId: number): void {
+  let pos = 0;
+  for (const p of defaultParticipants()) {
+    run(
+      'INSERT OR IGNORE INTO participants(group_id, device_id, original_name, custom_name, skipped, position) VALUES(?,?,?,?,?,?)',
+      [groupId, p.device_id, p.original_name, p.custom_name, p.skipped ? 1 : 0, pos]
+    );
+    pos++;
+  }
+}
+
+/**
+ * Стара одногрупна форма (device_id PRIMARY KEY) → групова: створюємо групу №1,
+ * перебудовуємо participants із числовим id + group_id + source, перешиваємо
+ * generations.participant_id (device_id → числовий id).
+ */
+function migrateParticipantsToGroups(): void {
+  const con = db();
+  con.exec('BEGIN');
+  try {
+    run('INSERT OR IGNORE INTO groups(id, name) VALUES(1, ?)', [DEFAULT_GROUP_NAME]);
+    con.exec('ALTER TABLE participants RENAME TO participants_old');
+    con.exec(PARTICIPANTS_DDL);
+    con.exec(`
+      INSERT INTO participants(group_id, device_id, original_name, custom_name,
+        avatar, avatar_mime, avatar_end, avatar_end_mime, skipped, position, user_added, updated_at)
+      SELECT 1, device_id, original_name, custom_name,
+        avatar, avatar_mime, avatar_end, avatar_end_mime, skipped, position, user_added, updated_at
+      FROM participants_old
+    `);
+    con.exec('DROP TABLE participants_old');
+    if (tableExists('generations')) {
+      con.exec(`
+        UPDATE generations SET participant_id = (
+          SELECT p.id FROM participants p
+          WHERE p.group_id = 1 AND p.device_id = generations.participant_id
+        )
+        WHERE participant_id LIKE 'spaces/%' OR participant_id LIKE 'local/%'
+      `);
+    }
+    con.exec('COMMIT');
+  } catch (e) {
+    con.exec('ROLLBACK');
+    throw e;
+  }
+}
+
+/** Створює таблиці, лагідні міграції, заливає дефолти. Ідемпотентно. */
+export function initDb(): void {
+  const con = db();
+  con.exec(`
+    CREATE TABLE IF NOT EXISTS groups (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL,
+      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  ensureColumn('participants', 'user_added', 'user_added INTEGER NOT NULL DEFAULT 0');
-  ensureColumn('participants', 'avatar_end', 'avatar_end BLOB');
-  ensureColumn('participants', 'avatar_end_mime', 'avatar_end_mime TEXT');
+
+  if (tableExists('participants') && !tableHasColumn('participants', 'group_id')) {
+    migrateParticipantsToGroups();
+  } else {
+    con.exec(PARTICIPANTS_DDL);
+  }
+  ensureColumn('participants', 'source', 'source BLOB');
+  ensureColumn('participants', 'source_mime', 'source_mime TEXT');
 
   con.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
 
@@ -105,6 +180,11 @@ export function initDb(): void {
   ensureColumn('generations', 'input_image', 'input_image BLOB');
   ensureColumn('generations', 'input_mime', 'input_mime TEXT');
   ensureColumn('generations', 'degrade_pct', 'degrade_pct INTEGER');
+  // approved_at — генерація «застосована» до учасника (історія НЕ видаляється).
+  ensureColumn('generations', 'approved_at', 'approved_at TEXT');
+  // Нормалізація: node:sqlite біндить JS-число як REAL, і TEXT-колонка
+  // participant_id осідала як "1.0" — зводимо до цілого тексту "1".
+  run("UPDATE generations SET participant_id = CAST(CAST(participant_id AS INTEGER) AS TEXT) WHERE participant_id LIKE '%.0'");
 
   con.exec(`
     CREATE TABLE IF NOT EXISTS prompt_presets (
@@ -137,21 +217,18 @@ export function initDb(): void {
       created_at   TEXT DEFAULT CURRENT_TIMESTAMP
     )
   `);
+  // Скрін привʼязується до групи, з якої рендерився.
+  ensureColumn('screenshots', 'group_id', 'group_id INTEGER');
 
-  // Дефолтні учасники.
-  let pos = 0;
-  for (const p of defaultParticipants()) {
-    run(
-      'INSERT OR IGNORE INTO participants(device_id, original_name, custom_name, skipped, position) VALUES(?,?,?,?,?)',
-      [p.device_id, p.original_name, p.custom_name, p.skipped ? 1 : 0, pos]
-    );
-    if (p.custom_name) {
-      run(
-        "UPDATE participants SET custom_name = ? WHERE device_id = ? AND (custom_name IS NULL OR custom_name = '')",
-        [p.custom_name, p.device_id]
-      );
-    }
-    pos++;
+  // Хоч одна група мусить існувати.
+  const groupCount = Number(one('SELECT COUNT(*) AS n FROM groups')?.n ?? 0);
+  if (groupCount === 0) {
+    run('INSERT INTO groups(name) VALUES(?)', [DEFAULT_GROUP_NAME]);
+  }
+  // Дефолтні слоти плиток у КОЖНІЙ групі — ідемпотентно (INSERT OR IGNORE по
+  // UNIQUE(group_id, device_id)); лікує і неповні стани після міграцій.
+  for (const g of all('SELECT id FROM groups')) {
+    seedGroupParticipants(g.id);
   }
 
   // Дефолтні налаштування.

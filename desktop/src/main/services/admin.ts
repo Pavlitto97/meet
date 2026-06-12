@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
-import { all, one, run, db, logActivity, initDb, toBuffer } from './db';
+import { all, one, run, db, logActivity, initDb, toBuffer, seedGroupParticipants } from './db';
 import { getSettings } from './settings';
 import { parseDataUrl, blobToDataUrl } from './media';
 import { DEFAULT_SETTINGS } from './config';
 import { dbPath, meetHtmlPath, meetHtmlBakPath, promptFile, rendererDir } from './paths';
 
-const TABLES = ['participants', 'settings', 'generations', 'prompt_presets', 'activity', 'screenshots'];
+const TABLES = ['groups', 'participants', 'settings', 'generations', 'prompt_presets', 'activity', 'screenshots'];
 
 function fileSize(p: string): number {
   try {
@@ -31,10 +31,12 @@ function countEntries(dir: string): number {
 }
 
 export function dashboardStats(): Record<string, any> {
+  const groups = Number(one('SELECT COUNT(*) AS n FROM groups')?.n ?? 0);
   const p = one(
     'SELECT COUNT(*) AS total, ' +
       'SUM(CASE WHEN skipped=0 THEN 1 ELSE 0 END) AS editable, ' +
       'SUM(skipped) AS skipped, SUM(user_added) AS user_added, ' +
+      'SUM(CASE WHEN source IS NOT NULL THEN 1 ELSE 0 END) AS with_source, ' +
       'SUM(CASE WHEN avatar IS NOT NULL THEN 1 ELSE 0 END) AS with_avatar, ' +
       'SUM(CASE WHEN avatar_end IS NOT NULL THEN 1 ELSE 0 END) AS with_avatar_end, ' +
       "SUM(CASE WHEN custom_name IS NOT NULL AND custom_name!='' THEN 1 ELSE 0 END) AS named " +
@@ -57,6 +59,7 @@ export function dashboardStats(): Record<string, any> {
   const byModel = all('SELECT model, COUNT(*) AS n, COALESCE(SUM(cost_usd),0) AS cost FROM generations GROUP BY model ORDER BY cost DESC');
   const s = getSettings();
   return {
+    groups,
     participants: p,
     generations: g,
     screenshots: sc,
@@ -155,70 +158,93 @@ export function restoreIndex(confirm: string): Record<string, any> {
 export function exportState(): Record<string, any> {
   const s = getSettings(); // без секретів
   delete (s as any).openrouter_api_key_set;
-  const prows = all(
-    'SELECT device_id, original_name, custom_name, skipped, position, user_added, ' +
-      'avatar, avatar_mime, avatar_end, avatar_end_mime FROM participants ORDER BY position'
-  );
+  delete (s as any).active_group_id; // локальний id — на іншій машині інші групи
   const presets = all('SELECT name, body FROM prompt_presets ORDER BY name');
-  const participants = prows.map((r) => {
-    const av = toBuffer(r.avatar);
-    const avEnd = toBuffer(r.avatar_end);
-    return {
-      device_id: r.device_id,
-      original_name: r.original_name,
-      custom_name: r.custom_name,
-      skipped: r.skipped,
-      position: r.position,
-      user_added: r.user_added,
-      avatar_data_url: av && r.avatar_mime ? blobToDataUrl(r.avatar_mime, av) : null,
-      avatar_end_data_url: avEnd && r.avatar_end_mime ? blobToDataUrl(r.avatar_end_mime, avEnd) : null,
-    };
+  const groups = all('SELECT id, name FROM groups ORDER BY id').map((g) => {
+    const prows = all(
+      'SELECT device_id, original_name, custom_name, skipped, position, user_added, ' +
+        'source, source_mime, avatar, avatar_mime, avatar_end, avatar_end_mime ' +
+        'FROM participants WHERE group_id = ? ORDER BY position',
+      [g.id]
+    );
+    const participants = prows.map((r) => {
+      const src = toBuffer(r.source);
+      const av = toBuffer(r.avatar);
+      const avEnd = toBuffer(r.avatar_end);
+      return {
+        device_id: r.device_id,
+        original_name: r.original_name,
+        custom_name: r.custom_name,
+        skipped: r.skipped,
+        position: r.position,
+        user_added: r.user_added,
+        source_data_url: src && r.source_mime ? blobToDataUrl(r.source_mime, src) : null,
+        avatar_data_url: av && r.avatar_mime ? blobToDataUrl(r.avatar_mime, av) : null,
+        avatar_end_data_url: avEnd && r.avatar_end_mime ? blobToDataUrl(r.avatar_end_mime, avEnd) : null,
+      };
+    });
+    return { name: g.name, participants };
   });
   const prompt = fs.existsSync(promptFile()) ? fs.readFileSync(promptFile(), 'utf8') : '';
-  return { version: 1, settings: s, prompt, presets, participants };
+  return { version: 2, settings: s, prompt, presets, groups };
 }
 
 export function importState(data: any): Record<string, any> {
   if (!data || typeof data !== 'object') return { error: 'очікувався JSON-обʼєкт', _status: 400 };
+  const isNumericLike = (v: any) =>
+    (typeof v === 'number' && Number.isFinite(v)) ||
+    (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v)));
+
+  // Знімок v2: groups[{name, participants}]; v1 (legacy): плоскі participants → у першу групу.
+  const groupsIn: Array<{ name: string; participants: any[] }> =
+    Array.isArray(data.groups) && data.groups.length
+      ? data.groups.map((g: any) => ({ name: String(g?.name ?? '').trim() || 'Імпортована група', participants: g?.participants ?? [] }))
+      : [{ name: '', participants: data.participants ?? [] }]; // '' = перша наявна група
+
   // Валідуємо/розпарсюємо учасників у памʼяті ДО запису.
-  const parsed: any[] = [];
-  for (const p of data.participants ?? []) {
-    const did = p.device_id ?? null;
-    if (!did) continue;
-    let avatar: Buffer | null = null;
-    let avatarMime: string | null = null;
-    let avatarEnd: Buffer | null = null;
-    let avatarEndMime: string | null = null;
-    try {
-      if (p.avatar_data_url) [avatarMime, avatar] = parseDataUrl(p.avatar_data_url);
-      if (p.avatar_end_data_url) [avatarEndMime, avatarEnd] = parseDataUrl(p.avatar_end_data_url);
-    } catch {
-      return { error: `невалідні дані учасника ${did}: bad data URL`, _status: 400 };
+  const parsedGroups: Array<{ name: string; rows: any[] }> = [];
+  for (const g of groupsIn) {
+    const rows: any[] = [];
+    for (const p of g.participants) {
+      const did = p.device_id ?? null;
+      if (!did) continue;
+      let source: Buffer | null = null;
+      let sourceMime: string | null = null;
+      let avatar: Buffer | null = null;
+      let avatarMime: string | null = null;
+      let avatarEnd: Buffer | null = null;
+      let avatarEndMime: string | null = null;
+      try {
+        if (p.source_data_url) [sourceMime, source] = parseDataUrl(p.source_data_url);
+        if (p.avatar_data_url) [avatarMime, avatar] = parseDataUrl(p.avatar_data_url);
+        if (p.avatar_end_data_url) [avatarEndMime, avatarEnd] = parseDataUrl(p.avatar_end_data_url);
+      } catch {
+        return { error: `невалідні дані учасника ${did}: bad data URL`, _status: 400 };
+      }
+      if (p.skipped !== undefined && typeof p.skipped !== 'boolean' && !isNumericLike(p.skipped)) {
+        return { error: `невалідні дані учасника ${did}: skipped не число`, _status: 400 };
+      }
+      if (p.position !== undefined && !isNumericLike(p.position)) {
+        return { error: `невалідні дані учасника ${did}: position не число`, _status: 400 };
+      }
+      rows.push({
+        did,
+        custom_name: p.custom_name ?? null,
+        original_name: p.original_name ?? p.custom_name ?? did,
+        skipped: Number(p.skipped ?? 0) ? 1 : 0,
+        position: parseInt(String(p.position ?? 0), 10) || 0,
+        source,
+        source_mime: sourceMime,
+        avatar,
+        avatar_mime: avatarMime,
+        avatar_end: avatarEnd,
+        avatar_end_mime: avatarEndMime,
+      });
     }
-    // Числові гарди як у PHP import_state (інакше — 400, без часткового імпорту).
-    const isNumericLike = (v: any) =>
-      (typeof v === 'number' && Number.isFinite(v)) ||
-      (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v)));
-    if (p.skipped !== undefined && typeof p.skipped !== 'boolean' && !isNumericLike(p.skipped)) {
-      return { error: `невалідні дані учасника ${did}: skipped не число`, _status: 400 };
-    }
-    if (p.position !== undefined && !isNumericLike(p.position)) {
-      return { error: `невалідні дані учасника ${did}: position не число`, _status: 400 };
-    }
-    parsed.push({
-      did,
-      custom_name: p.custom_name ?? null,
-      original_name: p.original_name ?? p.custom_name ?? did,
-      skipped: Number(p.skipped ?? 0) ? 1 : 0,
-      position: parseInt(String(p.position ?? 0), 10) || 0,
-      avatar,
-      avatar_mime: avatarMime,
-      avatar_end: avatarEnd,
-      avatar_end_mime: avatarEndMime,
-    });
+    parsedGroups.push({ name: g.name, rows });
   }
 
-  const counts = { settings: 0, participants_updated: 0, participants_created: 0, presets: 0 };
+  const counts = { settings: 0, groups_created: 0, participants_updated: 0, participants_created: 0, presets: 0 };
   const con = db();
   con.exec('BEGIN');
   try {
@@ -240,22 +266,39 @@ export function importState(data: any): Record<string, any> {
         counts.presets++;
       }
     }
-    for (const r of parsed) {
-      const exists = one('SELECT 1 AS x FROM participants WHERE device_id = ?', [r.did]);
-      if (exists) {
-        run(
-          'UPDATE participants SET custom_name=?, skipped=?, position=?, avatar=?, avatar_mime=?, ' +
-            'avatar_end=?, avatar_end_mime=?, updated_at=CURRENT_TIMESTAMP WHERE device_id=?',
-          [r.custom_name, r.skipped, r.position, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime, r.did]
-        );
-        counts.participants_updated++;
-      } else if (String(r.did).startsWith('local/')) {
-        run(
-          'INSERT INTO participants(device_id, original_name, custom_name, skipped, position, user_added, ' +
-            'avatar, avatar_mime, avatar_end, avatar_end_mime) VALUES(?,?,?,?,?,1,?,?,?,?)',
-          [r.did, r.original_name, r.custom_name, r.skipped, r.position, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime]
-        );
-        counts.participants_created++;
+    for (const g of parsedGroups) {
+      // Група за назвою; legacy-знімок ('') → перша наявна група.
+      let gid: number;
+      if (g.name === '') {
+        gid = Number(one('SELECT id FROM groups ORDER BY id LIMIT 1')?.id ?? 1);
+      } else {
+        const existing = one('SELECT id FROM groups WHERE name = ?', [g.name]);
+        if (existing) {
+          gid = Number(existing.id);
+        } else {
+          gid = run('INSERT INTO groups(name) VALUES(?)', [g.name]).lastInsertRowid;
+          seedGroupParticipants(gid); // дефолтні слоти плиток; знімок далі їх оновить
+          counts.groups_created++;
+        }
+      }
+      for (const r of g.rows) {
+        const exists = one('SELECT id FROM participants WHERE group_id = ? AND device_id = ?', [gid, r.did]);
+        if (exists) {
+          run(
+            'UPDATE participants SET custom_name=?, skipped=?, position=?, source=?, source_mime=?, avatar=?, avatar_mime=?, ' +
+              'avatar_end=?, avatar_end_mime=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
+            [r.custom_name, r.skipped, r.position, r.source, r.source_mime, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime, exists.id]
+          );
+          counts.participants_updated++;
+        } else {
+          // Дефолтні слоти сідяться при створенні групи; сюди потрапляють лише user_added.
+          run(
+            'INSERT INTO participants(group_id, device_id, original_name, custom_name, skipped, position, user_added, ' +
+              'source, source_mime, avatar, avatar_mime, avatar_end, avatar_end_mime) VALUES(?,?,?,?,?,?,1,?,?,?,?,?,?)',
+            [gid, r.did, r.original_name, r.custom_name, r.skipped, r.position, r.source, r.source_mime, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime]
+          );
+          counts.participants_created++;
+        }
       }
     }
     con.exec('COMMIT');

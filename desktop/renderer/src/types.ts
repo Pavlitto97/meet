@@ -1,10 +1,26 @@
 // Domain types mirroring the backend JSON shapes (see src/main/services/*).
 // Integer columns come back as 0/1 numbers (ATTR_STRINGIFY_FETCHES=false).
 
+export interface Group {
+  id: number
+  name: string
+  created_at?: string
+  participants: number
+  editable: number | null
+  with_source: number | null
+  with_avatar: number | null
+  with_avatar_end: number | null
+  generations: number
+  active: 0 | 1
+}
+
 export interface Participant {
+  id: number
+  group_id: number
   device_id: string
   original_name: string
   custom_name: string | null
+  has_source: 0 | 1
   has_avatar: 0 | 1
   has_avatar_end: 0 | 1
   skipped: 0 | 1
@@ -16,8 +32,10 @@ export type GenStatus = 'pending' | 'done' | 'error'
 
 export interface Generation {
   id: number
-  participant_id: string | null
+  participant_id: number | null
   participant_name: string | null
+  group_id: number | null
+  group_name: string | null
   prompt?: string
   model: string
   provider: string
@@ -30,6 +48,7 @@ export interface Generation {
   prompt_tokens: number | null
   output_tokens: number | null
   degrade_pct: number | null
+  approved_at: string | null
   created_at?: string
 }
 
@@ -43,6 +62,8 @@ export interface Screenshot {
   label: string | null
   created_at: string
   has_image: 0 | 1
+  group_id: number | null
+  group_name: string | null
 }
 
 export interface Settings {
@@ -51,6 +72,7 @@ export interface Settings {
   start_period?: string
   end_time?: string
   end_period?: string
+  active_group_id?: string | number
   gen_model?: string
   gen_provider?: string
   gen_tier?: string
@@ -73,21 +95,6 @@ export interface Preset {
   body: string
   created_at?: string
   updated_at?: string
-}
-
-export interface DegradeMethod {
-  key: string
-  label: string
-  layer: 'none' | 'server' | 'browser'
-  desc: string
-}
-
-export interface DegradeSpec {
-  method?: string
-  intensity?: number
-  layer?: string
-  filter: string
-  svg: string
 }
 
 export interface Credits {

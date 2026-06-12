@@ -37,6 +37,11 @@ export function promptSeedPath(): string {
   return resourcePath('promt.md');
 }
 
+/** Сплеш-прелоадер (splash.html; splash.png лежить поруч). */
+export function splashHtmlPath(): string {
+  return resourcePath('splash.html');
+}
+
 /** Білд Vue SPA (Vite outDir = renderer/dist). dev — desktop/renderer/dist; пакет — всередині asar. */
 export function rendererDir(): string {
   return path.join(app.getAppPath(), 'renderer', 'dist');

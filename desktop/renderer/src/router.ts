@@ -4,39 +4,28 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from 'vue-rou
 // protocol needs no SPA fallback, and the /api/render preview window (app://meet/api/...)
 // never collides with a client route.
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/editor' },
-  {
-    path: '/editor',
-    component: () => import('@/views/EditorView.vue'),
-    meta: { css: 'app', title: 'Meet — редактор' },
-  },
+  { path: '/', redirect: '/admin' },
   {
     path: '/admin',
     component: () => import('@/views/AdminView.vue'),
     meta: { css: 'admin', title: 'Meet — адмін-панель' },
-    redirect: '/admin/participants',
+    redirect: '/admin/groups',
     children: [
-      { path: 'participants', component: () => import('@/components/admin/ParticipantsTab.vue'), meta: { tab: 'participants' } },
+      { path: 'groups', component: () => import('@/components/admin/GroupsTab.vue'), meta: { tab: 'groups' } },
+      { path: 'groups/:id(\\d+)', component: () => import('@/components/admin/GroupDetailTab.vue'), meta: { tab: 'groups' } },
       { path: 'generations', component: () => import('@/components/admin/GenerationsTab.vue'), meta: { tab: 'generations' } },
       { path: 'screenshots', component: () => import('@/components/admin/ScreenshotsTab.vue'), meta: { tab: 'screenshots' } },
       { path: 'settings', component: () => import('@/components/admin/SettingsTab.vue'), meta: { tab: 'settings' } },
       { path: 'prompt', component: () => import('@/components/admin/PromptTab.vue'), meta: { tab: 'prompt' } },
     ],
   },
-  {
-    path: '/degrade-lab',
-    component: () => import('@/views/DegradeLabView.vue'),
-    meta: { css: 'admin', title: 'Meet — лабораторія деградації' },
-  },
-  { path: '/:pathMatch(.*)*', redirect: '/editor' },
+  { path: '/:pathMatch(.*)*', redirect: '/admin' },
 ]
 
 const router = createRouter({ history: createWebHashHistory(), routes })
 
-// Per-route stylesheet swap. app.css (editor) and admin.css (admin + lab) define the
-// SAME :root var names with DIFFERENT values, so loading both globally would re-theme
-// each other. Since router-view mounts one view at a time, we keep exactly one active
-// <link id="view-css">. Appended at runtime → wins over the bundled flatpickr CSS.
+// Single admin stylesheet, attached once. (The legacy editor's app.css is gone;
+// keeping the <link id="view-css"> hook so a future view could swap it.)
 function applyViewCss(name: string): void {
   let link = document.getElementById('view-css') as HTMLLinkElement | null
   if (!link) {

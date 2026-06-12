@@ -1,0 +1,22 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "php-editor",
+      "runtimeExecutable": "php",
+      "runtimeArgs": ["server.php"],
+      "port": 8000
+    },
+    {
+      "name": "electron-desktop",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start", "--prefix", "desktop"]
+    },
+    {
+      "name": "electron-desktop-debug",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "debug", "--prefix", "desktop"],
+      "port": 9222
+    }
+  ]
+}
