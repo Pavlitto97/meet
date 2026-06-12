@@ -6,7 +6,7 @@ import { app } from 'electron';
 import { all, one, run, db, logActivity, initDb, toBuffer, seedGroupParticipants } from './db';
 import { getSettings } from './settings';
 import { parseDataUrl, blobToDataUrl } from './media';
-import { DEFAULT_SETTINGS } from './config';
+import { DEFAULT_SETTINGS, LEGACY_SPACE, LEGACY_DEVICE_MAP } from './config';
 import { dbPath, meetHtmlPath, meetHtmlBakPath, promptFile, rendererDir } from './paths';
 
 const TABLES = ['groups', 'participants', 'settings', 'generations', 'prompt_presets', 'activity', 'screenshots'];
@@ -68,8 +68,9 @@ export function dashboardStats(): Record<string, any> {
     db_size_bytes: fileSize(dbPath()),
     settings: {
       meeting_code: s.meeting_code ?? null,
-      start: `${s.start_time ?? ''} ${s.start_period ?? ''}`,
-      end: `${s.end_time ?? ''} ${s.end_period ?? ''}`,
+      // 24-годинний формат (без AM/PM).
+      start: String(s.start_time ?? ''),
+      end: String(s.end_time ?? ''),
       gen_model: s.gen_model ?? null,
       api_key_set: s.openrouter_api_key_set ?? false,
     },
@@ -160,9 +161,9 @@ export function exportState(): Record<string, any> {
   delete (s as any).openrouter_api_key_set;
   delete (s as any).active_group_id; // локальний id — на іншій машині інші групи
   const presets = all('SELECT name, body FROM prompt_presets ORDER BY name');
-  const groups = all('SELECT id, name FROM groups ORDER BY id').map((g) => {
+  const groups = all('SELECT id, name, slide, slide_mime FROM groups ORDER BY id').map((g) => {
     const prows = all(
-      'SELECT device_id, original_name, custom_name, skipped, position, user_added, ' +
+      'SELECT device_id, original_name, custom_name, skipped, position, user_added, deleted, ' +
         'source, source_mime, avatar, avatar_mime, avatar_end, avatar_end_mime ' +
         'FROM participants WHERE group_id = ? ORDER BY position',
       [g.id]
@@ -178,15 +179,21 @@ export function exportState(): Record<string, any> {
         skipped: r.skipped,
         position: r.position,
         user_added: r.user_added,
+        deleted: r.deleted,
         source_data_url: src && r.source_mime ? blobToDataUrl(r.source_mime, src) : null,
         avatar_data_url: av && r.avatar_mime ? blobToDataUrl(r.avatar_mime, av) : null,
         avatar_end_data_url: avEnd && r.avatar_end_mime ? blobToDataUrl(r.avatar_end_mime, avEnd) : null,
       };
     });
-    return { name: g.name, participants };
+    const slideBlob = toBuffer(g.slide);
+    return {
+      name: g.name,
+      slide_data_url: slideBlob && g.slide_mime ? blobToDataUrl(g.slide_mime, slideBlob) : null,
+      participants,
+    };
   });
   const prompt = fs.existsSync(promptFile()) ? fs.readFileSync(promptFile(), 'utf8') : '';
-  return { version: 2, settings: s, prompt, presets, groups };
+  return { version: 3, settings: s, prompt, presets, groups };
 }
 
 export function importState(data: any): Record<string, any> {
@@ -195,19 +202,32 @@ export function importState(data: any): Record<string, any> {
     (typeof v === 'number' && Number.isFinite(v)) ||
     (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v)));
 
-  // Знімок v2: groups[{name, participants}]; v1 (legacy): плоскі participants → у першу групу.
-  const groupsIn: Array<{ name: string; participants: any[] }> =
+  // Знімок v2/v3: groups[{name, slide_data_url?, participants}]; v1 (legacy):
+  // плоскі participants → у першу групу.
+  const groupsIn: Array<{ name: string; slide_data_url: string | null; participants: any[] }> =
     Array.isArray(data.groups) && data.groups.length
-      ? data.groups.map((g: any) => ({ name: String(g?.name ?? '').trim() || 'Імпортована група', participants: g?.participants ?? [] }))
-      : [{ name: '', participants: data.participants ?? [] }]; // '' = перша наявна група
+      ? data.groups.map((g: any) => ({
+          name: String(g?.name ?? '').trim() || 'Імпортована група',
+          slide_data_url: g?.slide_data_url ?? null,
+          participants: g?.participants ?? [],
+        }))
+      : [{ name: '', slide_data_url: null, participants: data.participants ?? [] }]; // '' = перша наявна група
 
   // Валідуємо/розпарсюємо учасників у памʼяті ДО запису.
-  const parsedGroups: Array<{ name: string; rows: any[] }> = [];
+  const parsedGroups: Array<{ name: string; slide: Buffer | null; slide_mime: string | null; rows: any[] }> = [];
   for (const g of groupsIn) {
     const rows: any[] = [];
     for (const p of g.participants) {
-      const did = p.device_id ?? null;
+      let did = p.device_id ? String(p.device_id) : null;
       if (!did) continue;
+      // Знімки старого шаблону (yrt-kczi-csw): редаговані слоти мапляться на нові
+      // device_id (як migrateLegacyTemplate), решта (Pavlo/«3 others») — мимо:
+      // без мапінгу вони осіли б phantom-рядками, які старт-міграція потім зітре.
+      if (did.startsWith(LEGACY_SPACE + '/')) {
+        const mapped = LEGACY_DEVICE_MAP[did];
+        if (!mapped) continue;
+        did = mapped;
+      }
       let source: Buffer | null = null;
       let sourceMime: string | null = null;
       let avatar: Buffer | null = null;
@@ -232,6 +252,7 @@ export function importState(data: any): Record<string, any> {
         custom_name: p.custom_name ?? null,
         original_name: p.original_name ?? p.custom_name ?? did,
         skipped: Number(p.skipped ?? 0) ? 1 : 0,
+        deleted: Number(p.deleted ?? 0) ? 1 : 0,
         position: parseInt(String(p.position ?? 0), 10) || 0,
         source,
         source_mime: sourceMime,
@@ -241,7 +262,16 @@ export function importState(data: any): Record<string, any> {
         avatar_end_mime: avatarEndMime,
       });
     }
-    parsedGroups.push({ name: g.name, rows });
+    let slide: Buffer | null = null;
+    let slideMime: string | null = null;
+    if (g.slide_data_url) {
+      try {
+        [slideMime, slide] = parseDataUrl(g.slide_data_url);
+      } catch {
+        return { error: `невалідний слайд групи «${g.name}»: bad data URL`, _status: 400 };
+      }
+    }
+    parsedGroups.push({ name: g.name, slide, slide_mime: slideMime, rows });
   }
 
   const counts = { settings: 0, groups_created: 0, participants_updated: 0, participants_created: 0, presets: 0 };
@@ -281,21 +311,24 @@ export function importState(data: any): Record<string, any> {
           counts.groups_created++;
         }
       }
+      if (g.slide) {
+        run('UPDATE groups SET slide=?, slide_mime=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', [g.slide, g.slide_mime, gid]);
+      }
       for (const r of g.rows) {
         const exists = one('SELECT id FROM participants WHERE group_id = ? AND device_id = ?', [gid, r.did]);
         if (exists) {
           run(
-            'UPDATE participants SET custom_name=?, skipped=?, position=?, source=?, source_mime=?, avatar=?, avatar_mime=?, ' +
+            'UPDATE participants SET custom_name=?, skipped=?, deleted=?, position=?, source=?, source_mime=?, avatar=?, avatar_mime=?, ' +
               'avatar_end=?, avatar_end_mime=?, updated_at=CURRENT_TIMESTAMP WHERE id=?',
-            [r.custom_name, r.skipped, r.position, r.source, r.source_mime, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime, exists.id]
+            [r.custom_name, r.skipped, r.deleted, r.position, r.source, r.source_mime, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime, exists.id]
           );
           counts.participants_updated++;
         } else {
           // Дефолтні слоти сідяться при створенні групи; сюди потрапляють лише user_added.
           run(
-            'INSERT INTO participants(group_id, device_id, original_name, custom_name, skipped, position, user_added, ' +
-              'source, source_mime, avatar, avatar_mime, avatar_end, avatar_end_mime) VALUES(?,?,?,?,?,?,1,?,?,?,?,?,?)',
-            [gid, r.did, r.original_name, r.custom_name, r.skipped, r.position, r.source, r.source_mime, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime]
+            'INSERT INTO participants(group_id, device_id, original_name, custom_name, skipped, deleted, position, user_added, ' +
+              'source, source_mime, avatar, avatar_mime, avatar_end, avatar_end_mime) VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?,?)',
+            [gid, r.did, r.original_name, r.custom_name, r.skipped, r.deleted, r.position, r.source, r.source_mime, r.avatar, r.avatar_mime, r.avatar_end, r.avatar_end_mime]
           );
           counts.participants_created++;
         }

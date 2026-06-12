@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import sharp from 'sharp';
 import { all, one, run, db, logActivity, toBuffer } from './db';
 import { getSettings, getSetting } from './settings';
-import { blobToDataUrl, participantImageDataUrl } from './media';
+import { blobToDataUrl, participantImageDataUrl, parseDataUrl } from './media';
 import { callImage, extractImage, EmptyImageError, OpenRouterHttpError } from './openrouter';
 import { degradeBlob, camIsServer, autoResizeForAvatar } from './degrade';
 import { DEFAULT_GEN_MODEL, DEFAULT_GEN_PROVIDER, DEFAULT_GEN_TIER } from './config';
@@ -179,9 +179,9 @@ export function listGenerations(participant: string | null, status: string | nul
     // CAST: participant_id історично TEXT — назовні віддаємо число (битий/legacy → 0 → falsy).
     'SELECT g.id, CAST(g.participant_id AS INTEGER) AS participant_id, g.prompt, g.model, g.provider, g.service_tier, ' +
     'g.status, g.error, g.image IS NOT NULL AS has_image, g.image_mime, ' +
-    'g.input_image IS NOT NULL AS has_input, ' +
+    'g.input_image IS NOT NULL AS has_input, g.image_orig IS NOT NULL AS retouched, ' +
     'g.cost_usd, g.prompt_tokens, g.output_tokens, g.created_at, g.finished_at, g.degrade_pct, g.approved_at, ' +
-    'COALESCE(p.custom_name, p.original_name) AS participant_name, ' +
+    'p.custom_name AS p_custom, p.original_name AS p_orig, p.user_added AS p_user_added, ' +
     'p.group_id AS group_id, gr.name AS group_name ' +
     'FROM generations g ' +
     'LEFT JOIN participants p ON p.id = g.participant_id ' +
@@ -189,7 +189,8 @@ export function listGenerations(participant: string | null, status: string | nul
   const args: unknown[] = [];
   if (participant) {
     sql += ' AND g.participant_id = ?';
-    args.push(parseInt(participant, 10));
+    // String(): колонка TEXT, а число біндиться як REAL ('5' ≠ '5.0').
+    args.push(String(parseInt(participant, 10)));
   }
   if (group) {
     sql += ' AND p.group_id = ?';
@@ -200,7 +201,18 @@ export function listGenerations(participant: string | null, status: string | nul
     args.push(status);
   }
   sql += ' ORDER BY g.id DESC LIMIT 200';
-  return all(sql, args);
+  // original_name шаблонних слотів — latin1-простір (байти шаблону) → декодуємо у
+  // читабельний UTF-8; у user_added він уже звичайний UTF-8-рядок (не чіпаємо).
+  return all(sql, args).map(({ p_custom, p_orig, p_user_added, ...r }) => ({
+    ...r,
+    participant_name:
+      p_custom ??
+      (p_orig != null
+        ? p_user_added
+          ? String(p_orig)
+          : Buffer.from(String(p_orig), 'latin1').toString('utf8')
+        : null),
+  }));
 }
 
 export function generationImage(gid: number): [Buffer, string] | null {
@@ -352,6 +364,57 @@ export async function cropGeneration(gid: number, which: 'start' | 'end', rect: 
   }
   logActivity('generation.crop', `#${gid} → учасник #${pid} (${which}, ${w}x${h}@${x},${y})`);
   return { ok: true, x, y, width: w, height: h };
+}
+
+/**
+ * Ретуш: рендерер малює блюр/пікселізацію/замазування на canvas і шле повний
+ * відредагований кадр data:-URL-ом. image перезаписується; оригінал генерації
+ * відкладається в image_orig при ПЕРШІЙ ретуші (повторні ретуші його не псують),
+ * щоб «Відновити оригінал» завжди повертав чистий результат моделі.
+ */
+export async function retouchGeneration(gid: number, imageDataUrl: unknown): Promise<Record<string, any>> {
+  const row = one('SELECT id, status, image, image_mime, image_orig FROM generations WHERE id = ?', [gid]);
+  const img = toBuffer(row?.image);
+  if (!row) return { error: 'not found', _status: 404 };
+  if (row.status !== 'done' || !img) return { error: 'генерація ще не готова', _status: 400 };
+  if (typeof imageDataUrl !== 'string' || imageDataUrl === '') {
+    return { error: 'image_data_url обовʼязковий', _status: 400 };
+  }
+  let mime: string;
+  let blob: Buffer;
+  try {
+    [mime, blob] = parseDataUrl(imageDataUrl);
+  } catch {
+    return { error: 'bad data URL for image_data_url', _status: 400 };
+  }
+  if (!mime.startsWith('image/')) return { error: 'очікувалось зображення', _status: 400 };
+  // Декодуємо через sharp: і валідація байтів, і захист від підробленого mime.
+  try {
+    const meta = await sharp(blob).metadata();
+    if ((meta.width ?? 0) < 8 || (meta.height ?? 0) < 8) return { error: 'занадто мале зображення', _status: 400 };
+  } catch {
+    return { error: 'не вдалося прочитати зображення ретуші', _status: 400 };
+  }
+  const firstRetouch = toBuffer(row.image_orig) === null;
+  if (firstRetouch) {
+    run('UPDATE generations SET image_orig = image, image_orig_mime = image_mime WHERE id = ?', [gid]);
+  }
+  run('UPDATE generations SET image = ?, image_mime = ? WHERE id = ?', [blob, mime, gid]);
+  logActivity('generation.retouch', `#${gid} ${mime} ${blob.length} байт${firstRetouch ? ' (оригінал збережено)' : ''}`);
+  return { ok: true, retouched: 1 };
+}
+
+/** Повертає оригінальний (до ретуші) кадр генерації. */
+export function restoreGenerationImage(gid: number): Record<string, any> {
+  const row = one('SELECT id, image_orig FROM generations WHERE id = ?', [gid]);
+  if (!row) return { error: 'not found', _status: 404 };
+  if (toBuffer(row.image_orig) === null) return { error: 'оригінал не збережено — генерацію не ретушували', _status: 400 };
+  run(
+    'UPDATE generations SET image = image_orig, image_mime = image_orig_mime, image_orig = NULL, image_orig_mime = NULL WHERE id = ?',
+    [gid]
+  );
+  logActivity('generation.retouch_restore', `#${gid}`);
+  return { ok: true, retouched: 0 };
 }
 
 /**

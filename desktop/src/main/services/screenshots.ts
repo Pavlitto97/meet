@@ -54,7 +54,9 @@ async function capturePng(url: string, width: number, height: number): Promise<B
       /* ignore */
     }
     await painted;
-    await sleep(250);
+    // Плитки учасників у збереженій сторінці з'являються з CSS-анімацією — перший
+    // кадр ловить їх невидимими. Чекаємо стабілізації: ще кадри paint + пауза.
+    await sleep(1200);
     let img = await win.webContents.capturePage({ x: 0, y: 0, width, height });
     // На HiDPI/Retina capturePage віддає кадр у масштабі дисплея (2×) — зводимо
     // рівно до запитаних width×height, щоб байти PNG збігалися з метаданими у БД.
@@ -70,11 +72,13 @@ async function capturePng(url: string, width: number, height: number): Promise<B
   }
 }
 
-/** Робить скрін рендеру (start|end) і складає у таблицю screenshots. */
+/** Робить скрін рендеру (start|end) і складає у таблицю screenshots.
+ *  Дефолтний розмір — еталонна пропорція сцени шаблону (2555×1267 ≈ 2560×1271):
+ *  16:9-розміри розтягують картинку по вертикалі (fit масштабує осі незалежно). */
 export async function capture(
   which = 'start',
-  width: any = 1280,
-  height: any = 720,
+  width: any = 2555,
+  height: any = 1267,
   label: string | null = null,
   cam: string | null = null
 ): Promise<Record<string, any>> {

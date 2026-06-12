@@ -474,6 +474,50 @@ button.thumb.as-btn:hover { border-color: var(--accent); color: var(--accent); b
 .crop-confirm .crop-confirm-label.muted { color: var(--muted); }
 .crop-confirm button.applied { background: var(--ok-container); color: var(--ok); }
 
+/* ─── Ретуш-модалка (блюр/пікселі/замазування кистю або областю) ───────────────── */
+.modal.retouch-modal {
+  max-width: none; width: min(calc(100vw - 48px), 1280px);
+  height: min(calc(100vh - 48px), 940px); overflow: hidden;
+}
+.retouch-modal h3 { display: flex; align-items: center; gap: 8px; }
+.rt-toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.rt-group { display: inline-flex; align-items: center; gap: 6px; }
+.rt-label { font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 0; }
+.rt-group input[type="range"] { width: 130px; accent-color: var(--accent); }
+.rt-color {
+  width: 36px; height: 28px; padding: 2px; border: 1px solid var(--surface-3);
+  border-radius: var(--r-xs); background: var(--surface-2); cursor: pointer;
+}
+.gen-btn.on { background: var(--accent); color: var(--on-primary); }
+.gen-btn.on:hover { background: var(--accent); }
+.rt-stage.no-cursor { cursor: none; } /* кисть має власний курсор-кружечок */
+.rt-canvas { display: block; width: 100%; height: 100%; pointer-events: none; }
+.rt-rect { cursor: crosshair; box-shadow: none; border-style: dashed; pointer-events: none; }
+.rt-cursor {
+  position: absolute; z-index: 3; pointer-events: none; border-radius: var(--r-full);
+  border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .65), inset 0 0 0 1px rgba(0, 0, 0, .4);
+}
+
+/* ─── Слайд презентації групи ─────────────────────────────────────────────────── */
+.slide-card { margin: 0 0 16px; }
+.slide-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.slide-row .hint { flex: 1 1 260px; }
+.slide-thumb {
+  width: 168px; height: 94px; object-fit: contain; background: #111;
+  border-radius: var(--r-sm); border: 1px solid var(--surface-3); cursor: zoom-in; flex: none;
+}
+.slide-thumb.empty {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted); cursor: default; border-style: dashed;
+}
+
+/* ─── Видалені учасники (м'яке видалення, можна відновити) ────────────────────── */
+.deleted-block { margin-top: 20px; padding: 14px 16px; background: var(--surface-2); border-radius: var(--r-md); }
+.deleted-block h3 { margin: 0; font-size: 14.5px; font-weight: 500; display: flex; align-items: center; gap: 6px; color: var(--on-surface-variant); }
+.deleted-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; border-top: 1px solid var(--surface-3); }
+.deleted-row:first-of-type { border-top: none; }
+.deleted-row .del-name { color: var(--muted); text-decoration: line-through; }
+
 /* компактний діалог (prompt/confirm — заміна нативних) */
 .modal.modal-sm { max-width: 440px; gap: 16px; }
 .modal-label { font-size: 12px; color: var(--muted); font-weight: 500; margin: -6px 0 0; }

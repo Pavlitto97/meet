@@ -35,10 +35,14 @@ export function fmtDuration(sec: number): string {
   return (h ? `${h}г ` : '') + (m || h ? `${m}хв ` : '') + `${s}с`
 }
 
-/** "10:34 PM" → { time: "10:34", period: "PM" }; null if it doesn't match. */
-export function parseTime(str: string): { time: string; period: string } | null {
-  const m = String(str).trim().match(/^(\d{1,2}:\d{2})\s*(AM|PM)$/i)
-  return m ? { time: m[1], period: m[2].toUpperCase() } : null
+/** 24-год час "13:41" (як в Україні, без AM/PM) → "HH:MM"; null якщо не схоже. */
+export function parseTime24(str: string): string | null {
+  const m = String(str).trim().match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  const h = parseInt(m[1], 10)
+  const min = parseInt(m[2], 10)
+  if (h > 23 || min > 59) return null
+  return `${String(h).padStart(2, '0')}:${m[2]}`
 }
 
 export function debounce<T extends (...a: any[]) => void>(fn: T, ms: number): (...a: Parameters<T>) => void {

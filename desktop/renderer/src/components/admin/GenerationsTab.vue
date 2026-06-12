@@ -35,6 +35,7 @@
           <span class="badge" :class="badge(g).cls">{{ badge(g).label }}</span>
           <span v-if="g.approved_at" class="badge applied" title="цей колаж зараз стоїть аватарками учасника">застосовано</span>
           <span v-if="g.degrade_pct != null" class="badge user" title="авто-деградація кодеком">кодек {{ g.degrade_pct }}%</span>
+          <span v-if="g.retouched" class="badge user" title="кадр ретушовано (блюр/пікселі/замазування); оригінал збережено">ретуш</span>
         </div>
 
         <div v-if="g.has_input" class="gen-compare">
@@ -63,6 +64,7 @@
         <div v-if="g.status === 'done' && g.has_image" class="row">
           <button class="gen-btn" title="розрізати колаж і поставити аватарками початку та кінця" @click="apply(g)"><span class="msym sm">done_all</span> Застосувати</button>
           <button class="gen-btn" title="вручну виділити область для початку/кінця (зрізати білі рамки)" @click="cropGen = g"><span class="msym sm">crop</span> Кроп</button>
+          <button class="gen-btn" title="замазати/розмити/запікселити частину кадру (кисть або область)" @click="retouchGen = g"><span class="msym sm">brush</span> Ретуш</button>
           <button class="gen-btn" title="нова генерація з оригінального фото учасника" @click="regen(g)"><span class="msym sm">autorenew</span> Перегенерувати</button>
           <button class="iconbtn btn-sm danger" title="видалити" @click="del(g)"><span class="msym sm">delete</span></button>
         </div>
@@ -77,6 +79,7 @@
   </section>
 
   <CropModal :gen="cropGen" @close="cropGen = null" @applied="onCropped" />
+  <RetouchModal :gen="retouchGen" @close="retouchGen = null" @saved="onRetouched" @restored="onRetouched" />
 </template>
 
 <script setup lang="ts">
@@ -86,6 +89,7 @@ import { call } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import { AdminModalKey } from '@/components/admin/adminModal'
 import CropModal from '@/components/admin/CropModal.vue'
+import RetouchModal from '@/components/admin/RetouchModal.vue'
 import type { Generation, Group, Participant } from '@/types'
 
 const ui = useUiStore()
@@ -95,6 +99,7 @@ const modal = inject(AdminModalKey)!
 
 const generations = ref<Generation[]>([])
 const cropGen = ref<Generation | null>(null)
+const retouchGen = ref<Generation | null>(null)
 const groups = ref<Group[]>([])
 const filterParticipants = ref<Participant[]>([])
 const filterStatus = ref('')
@@ -204,6 +209,14 @@ async function apply(g: Generation, side: 'both' | 'start' | 'end' = 'both'): Pr
 // типовий сценарій: вирізати початок, посунути рамку, вирізати кінець.
 async function onCropped(): Promise<void> {
   await load()
+}
+// Ретуш збережено/відновлено: перечитуємо список і перевʼязуємо відкриту модалку
+// на свіжий обʼєкт (бейджі «ретуш» і кнопка «Відновити оригінал» актуалізуються).
+async function onRetouched(): Promise<void> {
+  await load()
+  if (retouchGen.value) {
+    retouchGen.value = generations.value.find((g) => g.id === retouchGen.value!.id) ?? null
+  }
 }
 async function bulkDel(scope: 'error' | 'done' | 'all', label: string): Promise<void> {
   const ok = await ui.confirm({ title: 'Підтвердь видалення', message: `Видалити ${label}?`, okText: 'Видалити', danger: true })

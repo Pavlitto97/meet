@@ -24,9 +24,13 @@ export function latin1ToUtf8(s: string): string {
   return mojibakeBytes(Buffer.from(s, 'utf8'));
 }
 
-/** Те саме, але з явних байтів (для імен із «загубленим» хвостовим байтом). */
-function mojibakeOf(text: string, ...extraBytes: number[]): string {
-  return mojibakeBytes(Buffer.concat([Buffer.from(text, 'utf8'), Buffer.from(extraBytes)]));
+/**
+ * UTF-8-рядок → latin1-простір (1 символ = 1 байт), БЕЗ mojibake-подвоєння.
+ * Шаблон mqy-kiph-fci збережено з чистим UTF-8 (на відміну від старого), тож
+ * pre-image імені у байтах HTML — це просто його UTF-8-байти.
+ */
+export function utf8ToLatin1(s: string): string {
+  return Buffer.from(s, 'utf8').toString('latin1');
 }
 
 // ─── OpenRouter ─────────────────────────────────────────────────────────────────
@@ -37,33 +41,106 @@ export const DEFAULT_GEN_PROVIDER = 'google-ai-studio';
 export const DEFAULT_GEN_TIER = 'flex';
 
 // ─── Початкові значення у HTML (що саме шукати для заміни) ─────────────────────────
-export const ORIGINAL_MEETING_CODE = 'yrt-kczi-csw';
-export const ORIGINAL_TIME = '10:34';
-export const ORIGINAL_PERIOD = 'PM';
+// Шаблон — збережена сторінка Meet «mqy-kiph-fci» (українська локаль, 24-год час,
+// Sandro показує презентацію, відкрита панель «Люди»). Див. scripts/process-template.mjs.
+export const ORIGINAL_MEETING_CODE = 'mqy-kiph-fci';
+export const ORIGINAL_TIME = '13:41';
+
+/** Простір девайсів шаблону mqy-kiph-fci. */
+export const TEMPLATE_SPACE = 'spaces/A6_qfu4mFcwB';
+/** Простір девайсів СТАРОГО шаблону (yrt-kczi-csw) — для міграції БД. */
+export const LEGACY_SPACE = 'spaces/mBsECBRYcS4B';
+
+/**
+ * Міграція БД зі старого шаблону: редаговані плитки переносяться на нові слоти
+ * за порядком (кастомні імена/фото/генерації зберігаються). Слоти без пари
+ * (Pavlo/«3 others») видаляються — нові skipped-слоти сідяться з дефолтів.
+ */
+export const LEGACY_DEVICE_MAP: Record<string, string> = {
+  [`${LEGACY_SPACE}/devices/127`]: `${TEMPLATE_SPACE}/devices/316`, // Sandro
+  [`${LEGACY_SPACE}/devices/129`]: `${TEMPLATE_SPACE}/devices/295`,
+  [`${LEGACY_SPACE}/devices/131`]: `${TEMPLATE_SPACE}/devices/296`,
+  [`${LEGACY_SPACE}/devices/132`]: `${TEMPLATE_SPACE}/devices/297`,
+  [`${LEGACY_SPACE}/devices/133`]: `${TEMPLATE_SPACE}/devices/298`,
+  [`${LEGACY_SPACE}/devices/134`]: `${TEMPLATE_SPACE}/devices/299`,
+  [`${LEGACY_SPACE}/devices/135`]: `${TEMPLATE_SPACE}/devices/300`,
+};
 
 export interface DefaultParticipant {
   device_id: string;
-  original_name: string; // latin1-байтовий рядок (mojibake як у HTML)
+  original_name: string; // latin1-байтовий рядок (= UTF-8-байти імені у HTML)
   custom_name: string | null;
   skipped: boolean;
 }
 
-// Імена на «я» (Саня/Ваня/Даня): у збереженій сторінці загубився останній байт
-// 0x8F → mojibake обривається на Ñ, тож pre-image = "Сан"+0xD1. Микола має
-// хвостовий 0x5C (backslash). Pavlo/«3 others» (126/136-138) — skipped.
+/**
+ * Asset-файли буквеної аватарки учасника у шаблоні (assets/img/people/uN.svg) +
+ * колір кружечка. Рендер підміняє src ЦИХ файлів: фото-аватарка → data:-URL,
+ * перейменування без фото → SVG-літера того ж кольору. Один учасник має той
+ * самий аватар у плитці (m0DVAf+SOQwsf), панелі «Люди» (KjWwNd), кружечках
+ * «Ще 3 особи» (qg7mD) та бейджі People (Qw4c9e).
+ */
+export const PARTICIPANT_ASSETS: Record<string, { files: string[]; color: string }> = {
+  [`${TEMPLATE_SPACE}/devices/316`]: { files: ['u4', 'u5', 'u22', 'u0'], color: '#8d6e63' }, // Sandro
+  [`${TEMPLATE_SPACE}/devices/295`]: { files: ['u6', 'u7', 'u23', 'u2'], color: '#00897b' }, // Анатолій
+  [`${TEMPLATE_SPACE}/devices/296`]: { files: ['u8', 'u9', 'u25', 'u3'], color: '#33691e' }, // Валерій
+  [`${TEMPLATE_SPACE}/devices/297`]: { files: ['u10', 'u11', 'u30', 'u1'], color: '#7e57c2' }, // Олександр
+  [`${TEMPLATE_SPACE}/devices/298`]: { files: ['u12', 'u13', 'u29'], color: '#33691e' }, // Михайло
+  [`${TEMPLATE_SPACE}/devices/299`]: { files: ['u14', 'u15', 'u24'], color: '#c2185b' }, // Андрій
+  [`${TEMPLATE_SPACE}/devices/300`]: { files: ['u16', 'u17', 'u31'], color: '#01579b' }, // Федір
+  [`${TEMPLATE_SPACE}/devices/301`]: { files: ['u18', 'u19', 'u32'], color: '#689f38' }, // Юрій
+  [`${TEMPLATE_SPACE}/devices/302`]: { files: ['u20', 'u27'], color: '#8d6e63' }, // Кирило («Ще 3 особи»)
+  [`${TEMPLATE_SPACE}/devices/306`]: { files: ['u21', 'u26'], color: '#00897b' }, // Денис («Ще 3 особи»)
+  [`${TEMPLATE_SPACE}/devices/307`]: { files: ['u28'], color: '#455a64' }, // Максим (лише панель)
+};
+
+/**
+ * Палітра підложок буквених кружечків (кольори зі скріншота еталона — канонічні
+ * аватарні кольори Meet). Рендер детерміновано «рандомить» їх ПО ГРУПІ:
+ * та сама група → ті самі кольори на тих самих місцях у «початку» і «кінці».
+ * Sandro (закріплена плитка) палітрою не зачіпається — завжди #8d6e63.
+ */
+export const LETTER_COLORS = [
+  '#00897b', // teal
+  '#33691e', // dark olive
+  '#7e57c2', // purple
+  '#c2185b', // magenta
+  '#01579b', // navy blue
+  '#689f38', // green
+  '#455a64', // blue grey
+  '#8d6e63', // brown
+  '#e65100', // deep orange
+  '#00838f', // dark cyan
+  '#5e35b1', // deep purple
+  '#ad1457', // dark pink
+];
+
+/** Колір Sandro Machaidze — закріплений (плитка і панель «1 в 1» зі скріншотом). */
+export const SANDRO_DEVICE = `${TEMPLATE_SPACE}/devices/316`;
+export const SANDRO_COLOR = '#8d6e63';
+
+// 8 редагованих плиток (Sandro 316 + сім іменних 295–301) і три учасники
+// плитки «Ще 3 особи» (302/306/307 — є лише у панелі «Люди», skipped).
+// Девайс 320 (презентація Sandro) НЕ сідиться — це той самий Sandro.
 export function defaultParticipants(): DefaultParticipant[] {
+  const p = (n: number, name: string, skipped = false): DefaultParticipant => ({
+    device_id: `${TEMPLATE_SPACE}/devices/${n}`,
+    original_name: name === 'Sandro Machaidze' ? name : utf8ToLatin1(name),
+    custom_name: name,
+    skipped,
+  });
   return [
-    { device_id: 'spaces/mBsECBRYcS4B/devices/127', original_name: 'Sandro Machaidze', custom_name: 'Sandro Machaidze', skipped: false },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/129', original_name: mojibakeOf('Сан', 0xd1), custom_name: 'Саня', skipped: false },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/131', original_name: mojibakeOf('Ван', 0xd1), custom_name: 'Ваня', skipped: false },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/132', original_name: mojibakeOf('Дан', 0xd1), custom_name: 'Даня', skipped: false },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/133', original_name: latin1ToUtf8('Дима'), custom_name: 'Дима', skipped: false },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/134', original_name: latin1ToUtf8('Микита'), custom_name: 'Микита', skipped: false },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/135', original_name: mojibakeOf('Микола', 0x5c), custom_name: 'Микола', skipped: false },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/126', original_name: 'Pavlo Grinevich', custom_name: null, skipped: true },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/136', original_name: latin1ToUtf8('Гриша'), custom_name: null, skipped: true },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/137', original_name: latin1ToUtf8('Павло'), custom_name: null, skipped: true },
-    { device_id: 'spaces/mBsECBRYcS4B/devices/138', original_name: latin1ToUtf8('Кирило'), custom_name: null, skipped: true },
+    p(316, 'Sandro Machaidze'),
+    p(295, 'Анатолій'),
+    p(296, 'Валерій'),
+    p(297, 'Олександр'),
+    p(298, 'Михайло'),
+    p(299, 'Андрій'),
+    p(300, 'Федір'),
+    p(301, 'Юрій'),
+    p(302, 'Кирило', true),
+    p(306, 'Денис', true),
+    p(307, 'Максим', true),
   ];
 }
 
@@ -74,11 +151,10 @@ export const DEFAULT_GROUP_NAME = 'Група 1';
 export const DEFAULT_SETTINGS: Record<string, string> = {
   // Активна група: її учасники йдуть у рендер і скріни.
   active_group_id: '1',
-  start_time: '10:34',
-  start_period: 'PM',
-  end_time: '11:15',
-  end_period: 'PM',
-  meeting_code: 'yrt-kczi-csw',
+  // 24-годинний формат (як в Україні), без AM/PM.
+  start_time: '13:41',
+  end_time: '14:22',
+  meeting_code: 'mqy-kiph-fci',
   openrouter_api_key: '',
   gen_model: DEFAULT_GEN_MODEL,
   gen_provider: DEFAULT_GEN_PROVIDER,

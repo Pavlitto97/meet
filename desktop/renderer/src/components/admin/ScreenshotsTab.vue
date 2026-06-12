@@ -1,9 +1,12 @@
 <template>
   <section class="panel active">
     <div class="toolbar">
-      <select v-model="shotSize" class="btn-sm" style="border-radius:16px;padding:8px 12px" title="Більше вікно → плитки учасників видно повністю">
-        <option value="1920x1080">1920×1080</option>
-        <option value="1280x720">1280×720</option>
+      <!-- Лише пропорція еталонного скріншота (2555×1267 ≈ сцена шаблону 2560×1271):
+           16:9 (1920×1080) розтягував картинку по вертикалі на ~13%. -->
+      <select v-model="shotSize" class="btn-sm" style="border-radius:16px;padding:8px 12px" title="Всі розміри — у рідній пропорції шаблону (без розтягування)">
+        <option value="2555x1267">2555×1267 — еталон (1:1)</option>
+        <option value="1920x952">1920×952 — менший, та сама пропорція</option>
+        <option value="1280x635">1280×635 — компактний</option>
       </select>
       <button :disabled="capturing" @click="capture('start')"><span class="msym">photo_camera</span>Скріншот початку зустрічі</button>
       <button :disabled="capturing" @click="capture('end')"><span class="msym">photo_camera</span>Скріншот кінця зустрічі</button>
@@ -59,7 +62,8 @@ const modal = inject(AdminModalKey)!
 
 const screenshots = ref<Screenshot[]>([])
 const activeGroup = ref<Group | null>(null)
-const shotSize = ref('1920x1080')
+// Дефолт — еталонна пропорція шаблону 1:1 (2555×1267, без масштабування/розтягування).
+const shotSize = ref('2555x1267')
 const capturing = ref(false)
 const bust = ref(Date.now())
 
@@ -70,8 +74,8 @@ function sub(s: Screenshot): string {
   return [s.created_at, fmtBytes(s.size_bytes), s.group_name, s.meeting_code, s.label].filter(Boolean).join(' · ')
 }
 function parseSize(): { width: number; height: number } {
-  const [w, h] = (shotSize.value || '1280x720').split('x').map(Number)
-  return { width: w || 1280, height: h || 720 }
+  const [w, h] = (shotSize.value || '2555x1267').split('x').map(Number)
+  return { width: w || 2555, height: h || 1267 }
 }
 
 async function load(): Promise<void> {

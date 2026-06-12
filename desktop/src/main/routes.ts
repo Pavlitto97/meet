@@ -12,11 +12,21 @@ import {
   createParticipant,
   updateParticipant,
   deleteParticipant,
+  restoreParticipant,
   reorder,
   participantImage,
   type ImageWhich,
 } from './services/participants';
-import { listGroups, createGroup, renameGroup, deleteGroup, activateGroup, resolveGroupId } from './services/groups';
+import {
+  listGroups,
+  createGroup,
+  renameGroup,
+  deleteGroup,
+  activateGroup,
+  resolveGroupId,
+  groupSlide,
+  setGroupSlide,
+} from './services/groups';
 import { renderMeet } from './services/render';
 import { fetchCredits, OpenRouterHttpError } from './services/openrouter';
 import {
@@ -26,6 +36,8 @@ import {
   generationInput,
   approveGeneration,
   cropGeneration,
+  retouchGeneration,
+  restoreGenerationImage,
   regenerate,
   deleteGeneration,
   bulkDeleteGenerations,
@@ -85,12 +97,17 @@ route('POST', '/api/groups', (r) => createGroup(r.json()));
 route('PUT', '/api/groups/(?<gid>\\d+)', (r) => renameGroup(intParam(r, 'gid'), r.json()));
 route('DELETE', '/api/groups/(?<gid>\\d+)', (r) => deleteGroup(intParam(r, 'gid')));
 route('POST', '/api/groups/(?<gid>\\d+)/activate', (r) => activateGroup(intParam(r, 'gid')));
+// Слайд презентації групи: зображення для відео-області шаблону.
+route('GET', '/api/groups/(?<gid>\\d+)/slide', (r) => binOrNull(groupSlide(intParam(r, 'gid'))));
+route('PUT', '/api/groups/(?<gid>\\d+)/slide', (r) => setGroupSlide(intParam(r, 'gid'), r.json()));
+route('DELETE', '/api/groups/(?<gid>\\d+)/slide', (r) => setGroupSlide(intParam(r, 'gid'), { slide_data_url: null }));
 
 // ─── Учасники (в межах групи; ?group= або активна) ────────────────────────────
 route('GET', '/api/participants', (r) => {
   const gid = resolveGroupId(r.q('group'));
   if (typeof gid !== 'number') return gid;
-  return listParticipants(gid);
+  // ?deleted=1 → лише м'яко видалені слоти (для секції відновлення).
+  return listParticipants(gid, ['1', 'true', 'only'].includes(String(r.q('deleted', '0'))) ? 'only' : 'active');
 });
 route('POST', '/api/participants/reorder', (r) => {
   const b = r.json();
@@ -105,10 +122,9 @@ route('POST', '/api/participants', (r) => {
   return createParticipant(gid, b);
 });
 route('PUT', '/api/participants/(?<pid>\\d+)', (r) => updateParticipant(intParam(r, 'pid'), r.json()));
-route('DELETE', '/api/participants/(?<pid>\\d+)', (r) => {
-  const hard = ['1', 'true'].includes(String(r.q('hard', '0')));
-  return deleteParticipant(intParam(r, 'pid'), hard);
-});
+// user_added → назавжди; дефолтний слот → м'яко (deleted=1, можна відновити).
+route('DELETE', '/api/participants/(?<pid>\\d+)', (r) => deleteParticipant(intParam(r, 'pid')));
+route('POST', '/api/participants/(?<pid>\\d+)/restore', (r) => restoreParticipant(intParam(r, 'pid')));
 route('GET', '/api/avatar/(?<pid>\\d+)', (r) => {
   const raw = String(r.q('which', 'start'));
   const which: ImageWhich = raw === 'end' || raw === 'source' ? raw : 'start';
@@ -160,6 +176,10 @@ route('POST', '/api/generations/(?<gid>\\d+)/crop', (r) => {
   }
   return cropGeneration(intParam(r, 'gid'), which, rect);
 });
+// Ретуш (блюр/пікселізація/замазування у рендерері): перезаписує image генерації,
+// оригінал відкладається в image_orig; restore-image повертає його назад.
+route('POST', '/api/generations/(?<gid>\\d+)/retouch', (r) => retouchGeneration(intParam(r, 'gid'), r.json().image_data_url));
+route('POST', '/api/generations/(?<gid>\\d+)/restore-image', (r) => restoreGenerationImage(intParam(r, 'gid')));
 route('POST', '/api/generations/(?<gid>\\d+)/regenerate', (r) => regenerate(intParam(r, 'gid')));
 route('POST', '/api/generations/bulk-delete', (r) => bulkDeleteGenerations(String(r.json().scope ?? '')));
 route('DELETE', '/api/generations/(?<gid>\\d+)', (r) => deleteGeneration(intParam(r, 'gid')));
@@ -167,7 +187,8 @@ route('DELETE', '/api/generations/(?<gid>\\d+)', (r) => deleteGeneration(intPara
 // ─── Скріни (webContents.capturePage) ───────────────────────────────────────────
 route('POST', '/api/screenshots', (r) => {
   const b = r.json();
-  return capture(b.which ?? 'start', b.width ?? 1280, b.height ?? 720, b.label ?? null, b.cam ?? null);
+  // Дефолт — еталонна пропорція шаблону (2555×1267), без розтягування під 16:9.
+  return capture(b.which ?? 'start', b.width ?? 2555, b.height ?? 1267, b.label ?? null, b.cam ?? null);
 });
 route('GET', '/api/screenshots', (r) => listScreenshots(r.q('which')));
 route('GET', '/api/screenshot-image/(?<sid>\\d+)', (r) => {

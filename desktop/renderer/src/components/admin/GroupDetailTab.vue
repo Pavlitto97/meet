@@ -18,6 +18,24 @@
       <b>початку</b> та <b>кінця</b> зустрічі. Перегенерація завжди йде з оригіналу.
     </p>
 
+    <div class="card slide-card">
+      <h3><span class="msym sm">co_present</span> Слайд презентації</h3>
+      <div class="slide-row">
+        <img v-if="group?.has_slide" class="slide-thumb" title="клік: збільшити" :src="slideSrc" @click="openSlide" />
+        <span v-else class="slide-thumb empty" title="слайд не завантажено"><span class="msym">imagesmode</span></span>
+        <div class="flex" style="gap:8px">
+          <button @click="startUpload(0, 'slide')"><span class="msym sm">upload</span>{{ group?.has_slide ? 'Замінити слайд' : 'Завантажити слайд' }}</button>
+          <button v-if="group?.has_slide" class="iconbtn btn-sm danger" title="прибрати слайд" @click="clearSlide"><span class="msym sm">delete</span></button>
+        </div>
+        <p class="hint" style="margin:0">
+          Зображення з ПК, яке вставляється в область презентації рендеру цієї групи
+          (початок і кінець). Без слайда лишається презентація з шаблону.
+          Якщо завантажити скріншот усього міта — слайд автоматично обріжеться до
+          області презентації (щоб у рендері не було «міта в міті» з другою панеллю «Люди»).
+        </p>
+      </div>
+    </div>
+
     <table class="data">
       <thead>
         <tr>
@@ -71,12 +89,22 @@
                 <span class="msym sm">history</span>
               </button>
               <button class="iconbtn btn-sm" title="прибрати фото (оригінал + аватарки)" @click="clearImages(p)"><span class="msym sm">close</span></button>
-              <button v-if="p.user_added" class="iconbtn btn-sm danger" title="видалити" @click="del(p)"><span class="msym sm">delete</span></button>
+              <button class="iconbtn btn-sm danger" :title="p.user_added ? 'видалити назавжди' : 'видалити (можна відновити)'" @click="del(p)"><span class="msym sm">delete</span></button>
             </div>
           </td>
         </tr>
       </tbody>
     </table>
+
+    <div v-if="deletedParticipants.length" class="deleted-block">
+      <h3><span class="msym sm">delete_history</span> Видалені учасники <span class="muted">({{ deletedParticipants.length }})</span></h3>
+      <p class="hint" style="margin:4px 0 8px">У рендері їхні плитки показуються як у вихідному шаблоні (рідна буква й колір), правки скинуто.</p>
+      <div v-for="p in deletedParticipants" :key="p.id" class="deleted-row">
+        <span class="del-name">{{ p.original_name }}</span>
+        <button class="btn-sm" title="повернути учасника в список" @click="restore(p)"><span class="msym sm">restore_from_trash</span>Відновити</button>
+      </div>
+    </div>
+
     <input ref="fileInput" type="file" accept="image/*" hidden @change="onFile" />
   </section>
 </template>
@@ -97,21 +125,24 @@ const modal = inject(AdminModalKey)!
 
 const group = ref<Group | null>(null)
 const participants = ref<Participant[]>([])
+const deletedParticipants = ref<Participant[]>([])
 const bust = ref(Date.now())
-const pendingUpload = ref<{ id: number; kind: 'source' | 'start' } | null>(null)
+const pendingUpload = ref<{ id: number; kind: 'source' | 'start' | 'slide' } | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const groupId = computed(() => parseInt(String(route.params.id), 10))
 const withSourceCount = computed(() => participants.value.filter((p) => p.has_source && !p.skipped).length)
+const slideSrc = computed(() => `/api/groups/${groupId.value}/slide?t=${bust.value}`)
 
 function thumbSrc(id: number, which: 'start' | 'end' | 'source'): string {
   return `/api/avatar/${id}?which=${which}&t=${bust.value}`
 }
 
 async function load(): Promise<void> {
-  const [groupsList, list] = await Promise.all([
+  const [groupsList, list, deletedList] = await Promise.all([
     call<Group[]>('GET', '/api/groups'),
     call<Participant[]>('GET', `/api/participants?group=${groupId.value}`),
+    call<Participant[]>('GET', `/api/participants?group=${groupId.value}&deleted=1`),
   ])
   group.value = groupsList.find((g) => g.id === groupId.value) ?? null
   if (!group.value) {
@@ -119,6 +150,7 @@ async function load(): Promise<void> {
     return
   }
   participants.value = list
+  deletedParticipants.value = deletedList
   bust.value = Date.now()
 }
 
@@ -150,7 +182,7 @@ async function move(idx: number, dir: -1 | 1): Promise<void> {
   await load()
 }
 
-function startUpload(id: number, kind: 'source' | 'start'): void {
+function startUpload(id: number, kind: 'source' | 'start' | 'slide'): void {
   pendingUpload.value = { id, kind }
   fileInput.value?.click()
 }
@@ -159,13 +191,49 @@ async function onFile(e: Event): Promise<void> {
   const file = input.files?.[0]
   const pending = pendingUpload.value
   if (!file || !pending) return
-  const dataUrl = await fileToDataUrl(file)
-  const body = pending.kind === 'source' ? { source_data_url: dataUrl } : { avatar_data_url: dataUrl }
-  await call('PUT', `/api/participants/${pending.id}`, body)
-  ui.toast(pending.kind === 'source' ? 'Оригінал завантажено — тепер можна генерувати' : 'Фото завантажено (початок)', 'ok')
-  pendingUpload.value = null
-  input.value = ''
+  // finally: інакше після помилки (битий файл/відмова сервера) повторний вибір
+  // ТОГО САМОГО файлу не дає change-події — тихий no-op.
+  try {
+    const dataUrl = await fileToDataUrl(file)
+    if (pending.kind === 'slide') {
+      const r = await call<{ cropped?: number }>('PUT', `/api/groups/${groupId.value}/slide`, { slide_data_url: dataUrl })
+      ui.toast(
+        r.cropped
+          ? 'Схоже на скріншот усього міта — слайд автоматично обрізано до області презентації'
+          : 'Слайд завантажено — він вставиться в область презентації рендеру',
+        'ok'
+      )
+    } else {
+      const body = pending.kind === 'source' ? { source_data_url: dataUrl } : { avatar_data_url: dataUrl }
+      await call('PUT', `/api/participants/${pending.id}`, body)
+      ui.toast(pending.kind === 'source' ? 'Оригінал завантажено — тепер можна генерувати' : 'Фото завантажено (початок)', 'ok')
+    }
+  } finally {
+    pendingUpload.value = null
+    input.value = ''
+  }
   await load()
+}
+
+async function clearSlide(): Promise<void> {
+  const ok = await ui.confirm({
+    title: 'Прибрати слайд?',
+    message: 'Область презентації в рендері повернеться до вигляду з шаблону.',
+    okText: 'Прибрати',
+    danger: true,
+  })
+  if (!ok) return
+  await call('DELETE', `/api/groups/${groupId.value}/slide`)
+  ui.toast('Слайд прибрано', 'ok')
+  await load()
+}
+
+function openSlide(): void {
+  modal.open({
+    title: `${group.value?.name ?? ''} — слайд презентації`,
+    imgSrc: slideSrc.value,
+    actions: [{ label: 'Закрити', cls: 'secondary', onClick: () => modal.close() }],
+  })
 }
 
 async function generate(p: Participant): Promise<void> {
@@ -214,13 +282,21 @@ async function clearImages(p: Participant): Promise<void> {
 async function del(p: Participant): Promise<void> {
   const ok = await ui.confirm({
     title: 'Видалити учасника?',
-    message: `«${p.custom_name || p.original_name}» буде видалено назавжди разом з генераціями.`,
+    message: p.user_added
+      ? `«${p.custom_name || p.original_name}» буде видалено назавжди разом з генераціями.`
+      : `«${p.custom_name || p.original_name}» зникне зі списку разом з фото і генераціями; плитка в рендері повернеться до вигляду шаблону. Учасника можна буде відновити.`,
     okText: 'Видалити',
     danger: true,
   })
   if (!ok) return
-  await call('DELETE', `/api/participants/${p.id}?hard=1`)
+  await call('DELETE', `/api/participants/${p.id}`)
   ui.toast('Видалено', 'ok')
+  await load()
+}
+
+async function restore(p: Participant): Promise<void> {
+  await call('POST', `/api/participants/${p.id}/restore`)
+  ui.toast(`«${p.original_name}» відновлено`, 'ok')
   await load()
 }
 

@@ -53,8 +53,10 @@
   **прибирає `ELECTRON_RUN_AS_NODE`** із env запуску (інакше electron-бінарник
   стартує як чистий Node без GUI/`protocol` і запуск падає). Спеки:
   `smoke.spec.ts` (вікно/хедер/вкладки), `flows.spec.ts` (групи → учасники →
-  source-аплоад → рендер → скрін → налаштування; БЕЗ OpenRouter — грошей не
-  витрачає, безпечно на CI), `live-generation.spec.ts` (реальна AI-генерація,
+  source-аплоад → рендер → слайд → видалення/відновлення → скрін → налаштування;
+  БЕЗ OpenRouter — грошей не витрачає, безпечно на CI), `crop.spec.ts` і
+  `retouch.spec.ts` (кроп/ретуш генерації; готова генерація сідиться напряму в
+  SQLite темп-БД), `live-generation.spec.ts` (реальна AI-генерація,
   **самопропускається** без `E2E_LIVE=1`; фото — env `E2E_LIVE_PHOTO=/шлях.jpg`).
 - **GitHub MCP** (user-scope, `~/.claude.json`): remote-HTTP сервер
   `https://api.githubcopilot.com/mcp/` з токеном `gh`. Дає Claude версіонування,
@@ -88,11 +90,29 @@
 
 ## Доменна модель (групи учасників + source-зображення)
 
+- **Шаблон** — збережена сторінка Meet **mqy-kiph-fci** (укр. локаль, 24-год час
+  `13:41` без AM/PM, Sandro презентує, відкрита панель «Люди»). Обробка сирого
+  HTML — `scripts/process-template.mjs` (зачистка, локалізація ресурсів, буквені
+  SVG `renderer/public/assets/img/people/uN.svg`). Рендер підміняє аватарки
+  глобальним `replaceAll` по імені файла `uN.svg` (плитка + панель «Люди» +
+  «Ще 3 особи» + бейдж People синхронно). Без фото — буквений SVG: літера з
+  актуального імені, колір з детермінованого розкладу групи (PRNG, сід = id
+  групи; стабільно між start/end). **Sandro (devices/316) закріплений**: завжди
+  `#8d6e63` з S. Head-inject пінить `c-wiz.SSPGKf` до 2560×1271 і вмикає
+  `transform:scale(1)` на `#yDmH0d` (containing block для fixed) — інакше
+  `width:100vw; overflow:hidden` кліпає плитки у вузьких вікнах/капчерах.
 - **Групи** (`services/groups.ts`, таблиця `groups`): кілька іменованих складів
   учасників. Кожна група має ВЛАСНІ 11 слотів плиток (`UNIQUE(group_id, device_id)`,
-  сід — `db.ts::seedGroupParticipants`). **Активна група** (settings
-  `active_group_id`, самолікується) — її учасників беруть `/api/render` і скріни;
-  явний оверрайд — `?group=N`. Останню групу видалити не можна.
+  сід — `db.ts::seedGroupParticipants`) і опційний **слайд презентації**
+  (`groups.slide`, API `GET/PUT/DELETE /api/groups/<id>/slide`) — зображення, яке
+  рендер вставляє замість `<video data-uid="100">` (область презентації).
+  **Активна група** (settings `active_group_id`, самолікується) — її учасників
+  беруть `/api/render` і скріни; явний оверрайд — `?group=N`. Останню групу
+  видалити не можна.
+- **Видалення учасника** (`DELETE /api/participants/<id>`): user_added —
+  назавжди; дефолтний слот — м'яко (`deleted=1`, правки скинуто, рендер показує
+  рідну плитку шаблону), відновлення — `POST .../restore`,
+  список — `GET /api/participants?deleted=1`.
 - **Учасник** адресується числовим `id` (НЕ device_id). Три зображення:
   `source`(+`_mime`) — оригінальне фото, з якого генерує AI (зберігається як є,
   лише страховий downscale >1600px у `degrade.ts::normalizeSourceImage`);
@@ -106,6 +126,10 @@
   зменшує під плитку і пише в avatar/avatar_end; генерація НЕ видаляється —
   ставиться `approved_at` (єдина «застосована» на учасника; історія для порівняння).
   **Regenerate** — ті ж параметри, але вхід перечитується з АКТУАЛЬНОГО source.
+  **Ретуш** (`RetouchModal.vue`, `POST /api/generations/<id>/retouch`): кисть або
+  прямокутна область × ефекти пікселізація/блюр/замазування на canvas у рендері;
+  перезаписує `image`, оригінал відкладається в `image_orig` при першій ретуші
+  (`POST .../restore-image` повертає). Кроп/approve йдуть уже з ретушованим кадром.
 - **Лабораторії деградації немає** (UI і degrade-* endpoints видалені). Сам
   `services/degrade.ts` живий: авто-деградація генерацій (settings `gen_degrade*`),
   resize-хелпери, cam-гейт рендеру (`?cam=`, дефолт none → байт-у-байт).

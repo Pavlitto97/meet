@@ -11,6 +11,7 @@ import log from 'electron-log';
 import { envPath, splashHtmlPath } from './services/paths';
 import { initDb } from './services/db';
 import { failOrphanedGenerations } from './services/generations';
+import { autoCropExistingSlides } from './services/groups';
 import { registerAppProtocol } from './protocol';
 import { initUpdater } from './updater';
 import './routes'; // side-effect: реєстрація всіх маршрутів
@@ -107,6 +108,9 @@ app.whenReady().then(async () => {
   registerAppProtocol();
   initDb();
   failOrphanedGenerations(); // pending без живого воркера → error (воркер inline у main)
+  // Слайди, завантажені до авто-кропу (повні скріншоти міта) → обрізати до
+  // області презентації. Фоном: не блокує вікно, помилки не валять старт.
+  void autoCropExistingSlides().catch((e) => log.warn('slide autocrop failed', e));
   const win = createWindow({ show: !splash });
   if (splash) {
     // Головне вікно показуємо, коли воно готове І сплеш провисів ≥ SPLASH_MIN_MS.

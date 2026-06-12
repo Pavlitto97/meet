@@ -3,12 +3,13 @@
     <div class="card">
       <h3>Параметри зустрічі</h3>
       <div class="flex">
-        <div class="field"><label>Час початку</label><TimePicker v-if="loaded" :display="startDisplay" placeholder="10:34 PM" @change="(p) => saveTime('start', p)" /></div>
-        <div class="field"><label>Час кінця</label><TimePicker v-if="loaded" :display="endDisplay" placeholder="11:15 PM" @change="(p) => saveTime('end', p)" /></div>
+        <div class="field"><label>Час початку</label><TimePicker v-if="loaded" :display="startDisplay" placeholder="13:41" @change="(p) => saveTime('start', p)" /></div>
+        <div class="field"><label>Час кінця</label><TimePicker v-if="loaded" :display="endDisplay" placeholder="14:22" @change="(p) => saveTime('end', p)" /></div>
         <div class="field"><label for="s-code">Код зустрічі</label>
-          <div class="input-with-btn"><input id="s-code" v-model="meetingCode" placeholder="yrt-kczi-csw" @change="saveSetting('meeting_code', meetingCode)" /><button type="button" class="icon-btn" title="Випадковий код" @click="genCode"><span class="msym">casino</span></button></div>
+          <div class="input-with-btn"><input id="s-code" v-model="meetingCode" placeholder="mqy-kiph-fci" @change="saveSetting('meeting_code', meetingCode)" /><button type="button" class="icon-btn" title="Випадковий код" @click="genCode"><span class="msym">casino</span></button></div>
         </div>
       </div>
+      <p class="muted" style="margin:8px 0 0">Час — 24-годинний (як в Україні), без AM/PM. Показується у шапці рендеру початку/кінця зустрічі.</p>
     </div>
 
     <div class="card card-tokens">
@@ -87,8 +88,8 @@ import type { Settings, Credits } from '@/types'
 const ui = useUiStore()
 const loaded = ref(false)
 const meetingCode = ref('')
-const startDisplay = ref('10:34 PM')
-const endDisplay = ref('11:15 PM')
+const startDisplay = ref('13:41')
+const endDisplay = ref('14:22')
 const apiKey = ref('')
 const apiKeyLocked = ref(false)
 const keyPlaceholder = computed(() => (apiKeyLocked.value ? '•••••• (з .env або БД)' : 'sk-or-...'))
@@ -118,8 +119,8 @@ async function genCode(): Promise<void> {
   await call('PUT', '/api/settings', { meeting_code: code })
   ui.toast('Згенеровано: ' + code, 'ok')
 }
-function saveTime(which: 'start' | 'end', p: { time: string; period: string }): void {
-  const body = which === 'start' ? { start_time: p.time, start_period: p.period } : { end_time: p.time, end_period: p.period }
+function saveTime(which: 'start' | 'end', p: { time: string }): void {
+  const body = which === 'start' ? { start_time: p.time } : { end_time: p.time }
   void (async () => {
     await call('PUT', '/api/settings', body)
     ui.toast('Збережено', 'ok')
@@ -157,8 +158,8 @@ async function refreshBalance(): Promise<void> {
 async function load(): Promise<void> {
   const s = await call<Settings>('GET', '/api/settings')
   meetingCode.value = s.meeting_code || ''
-  startDisplay.value = `${s.start_time || '10:34'} ${s.start_period || 'PM'}`
-  endDisplay.value = `${s.end_time || '11:15'} ${s.end_period || 'PM'}`
+  startDisplay.value = s.start_time || '13:41'
+  endDisplay.value = s.end_time || '14:22'
   if (s.gen_model && ['google/gemini-2.5-flash-image', 'google/gemini-3.5-flash'].includes(s.gen_model)) genModel.value = s.gen_model
   if (s.gen_provider) genProvider.value = String(s.gen_provider)
   if (s.gen_tier) genTier.value = String(s.gen_tier)

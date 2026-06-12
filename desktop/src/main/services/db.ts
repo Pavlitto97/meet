@@ -6,7 +6,13 @@
 import fs from 'node:fs';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { dbPath, promptFile, promptSeedPath } from './paths';
-import { DEFAULT_SETTINGS, DEFAULT_GROUP_NAME, defaultParticipants } from './config';
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_GROUP_NAME,
+  defaultParticipants,
+  LEGACY_SPACE,
+  LEGACY_DEVICE_MAP,
+} from './config';
 
 let _db: DatabaseSync | null = null;
 
@@ -133,6 +139,63 @@ function migrateParticipantsToGroups(): void {
   }
 }
 
+/**
+ * Шаблон yrt-kczi-csw → mqy-kiph-fci: редаговані слоти переїжджають на нові
+ * device_id за LEGACY_DEVICE_MAP (кастомні імена/фото/генерації зберігаються —
+ * числовий id рядка не міняється), original_name перешивається під байти нового
+ * шаблону. Слоти без пари у новому шаблоні видаляються разом із генераціями.
+ */
+function migrateLegacyTemplate(): void {
+  const legacy = all('SELECT id, group_id, device_id FROM participants WHERE device_id LIKE ?', [LEGACY_SPACE + '/%']);
+  if (legacy.length === 0) return;
+  const defaults = new Map(defaultParticipants().map((d) => [d.device_id, d]));
+  const con = db();
+  con.exec('BEGIN');
+  try {
+    for (const row of legacy) {
+      const target = LEGACY_DEVICE_MAP[row.device_id];
+      const def = target ? defaults.get(target) : undefined;
+      const taken = target ? one('SELECT id FROM participants WHERE group_id = ? AND device_id = ?', [row.group_id, target]) : null;
+      if (target && def && !taken) {
+        run('UPDATE participants SET device_id = ?, original_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [
+          target,
+          def.original_name,
+          row.id,
+        ]);
+      } else {
+        run('DELETE FROM generations WHERE participant_id = ?', [String(row.id)]);
+        run('DELETE FROM participants WHERE id = ?', [row.id]);
+      }
+    }
+    con.exec('COMMIT');
+  } catch (e) {
+    con.exec('ROLLBACK');
+    throw e;
+  }
+  logActivity('db.migrate', `шаблон mqy-kiph-fci: оброблено ${legacy.length} legacy-слотів`);
+}
+
+/**
+ * 12-год час (start_period/end_period) → 24-год (як в Україні). Ключі *_period
+ * прибрано з налаштувань; значення часу конвертується на місці. Старий дефолтний
+ * код зустрічі підміняється новим.
+ */
+function migrateTimeSettings(): void {
+  for (const which of ['start', 'end'] as const) {
+    const period = one('SELECT value FROM settings WHERE key = ?', [`${which}_period`]);
+    if (!period) continue;
+    const t = one('SELECT value FROM settings WHERE key = ?', [`${which}_time`]);
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(t?.value ?? '').trim());
+    if (m) {
+      let h = parseInt(m[1], 10) % 12;
+      if (String(period.value ?? '').toUpperCase() === 'PM') h += 12;
+      run('UPDATE settings SET value = ? WHERE key = ?', [`${String(h).padStart(2, '0')}:${m[2]}`, `${which}_time`]);
+    }
+    run('DELETE FROM settings WHERE key = ?', [`${which}_period`]);
+  }
+  run("UPDATE settings SET value = ? WHERE key = 'meeting_code' AND value = 'yrt-kczi-csw'", [DEFAULT_SETTINGS.meeting_code]);
+}
+
 /** Створює таблиці, лагідні міграції, заливає дефолти. Ідемпотентно. */
 export function initDb(): void {
   const con = db();
@@ -152,6 +215,12 @@ export function initDb(): void {
   }
   ensureColumn('participants', 'source', 'source BLOB');
   ensureColumn('participants', 'source_mime', 'source_mime TEXT');
+  // М'яке видалення дефолтних слотів: рядок лишається (UNIQUE-захист від
+  // повторного сіду), UI/рендер його ігнорують; можна відновити.
+  ensureColumn('participants', 'deleted', 'deleted INTEGER NOT NULL DEFAULT 0');
+  // Слайд презентації групи: зображення, що вставляється у відео-область шаблону.
+  ensureColumn('groups', 'slide', 'slide BLOB');
+  ensureColumn('groups', 'slide_mime', 'slide_mime TEXT');
 
   con.exec('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
 
@@ -182,6 +251,10 @@ export function initDb(): void {
   ensureColumn('generations', 'degrade_pct', 'degrade_pct INTEGER');
   // approved_at — генерація «застосована» до учасника (історія НЕ видаляється).
   ensureColumn('generations', 'approved_at', 'approved_at TEXT');
+  // Ретуш (блюр/пікселізація/замазування): image перезаписується відредагованим,
+  // оригінал генерації відкладається в image_orig — можна відновити.
+  ensureColumn('generations', 'image_orig', 'image_orig BLOB');
+  ensureColumn('generations', 'image_orig_mime', 'image_orig_mime TEXT');
   // Нормалізація: node:sqlite біндить JS-число як REAL, і TEXT-колонка
   // participant_id осідала як "1.0" — зводимо до цілого тексту "1".
   run("UPDATE generations SET participant_id = CAST(CAST(participant_id AS INTEGER) AS TEXT) WHERE participant_id LIKE '%.0'");
@@ -225,6 +298,9 @@ export function initDb(): void {
   if (groupCount === 0) {
     run('INSERT INTO groups(name) VALUES(?)', [DEFAULT_GROUP_NAME]);
   }
+  // Перенос даних зі старого шаблону — ДО сіда, щоб мапінг не вперся в нові слоти.
+  migrateLegacyTemplate();
+  migrateTimeSettings();
   // Дефолтні слоти плиток у КОЖНІЙ групі — ідемпотентно (INSERT OR IGNORE по
   // UNIQUE(group_id, device_id)); лікує і неповні стани після міграцій.
   for (const g of all('SELECT id FROM groups')) {

@@ -5,6 +5,7 @@ export interface Group {
   id: number
   name: string
   created_at?: string
+  has_slide: 0 | 1
   participants: number
   editable: number | null
   with_source: number | null
@@ -26,6 +27,7 @@ export interface Participant {
   skipped: 0 | 1
   position: number
   user_added: 0 | 1
+  deleted: 0 | 1
 }
 
 export type GenStatus = 'pending' | 'done' | 'error'
@@ -44,6 +46,7 @@ export interface Generation {
   error: string | null
   has_image: 0 | 1
   has_input: 0 | 1
+  retouched: 0 | 1
   cost_usd: number | null
   prompt_tokens: number | null
   output_tokens: number | null
@@ -68,10 +71,9 @@ export interface Screenshot {
 
 export interface Settings {
   meeting_code?: string
+  // 24-годинний формат «HH:MM» (без AM/PM).
   start_time?: string
-  start_period?: string
   end_time?: string
-  end_period?: string
   active_group_id?: string | number
   gen_model?: string
   gen_provider?: string

@@ -5,12 +5,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import flatpickr from 'flatpickr'
-import { parseTime } from '@/lib/util'
+import { parseTime24 } from '@/lib/util'
 
-// 12-hour time picker (port of wireTimePicker). Initialized ONCE on mount with the
-// composed display string; emits {time, period} on change. The parent autosaves.
+// 24-год пікер часу (як в Україні, без AM/PM). Ініціалізується ОДИН раз на mount
+// зі стартовим значенням; на зміну емітить {time: "HH:MM"}. Автозбереження — у батька.
 const props = defineProps<{ display: string; placeholder?: string }>()
-const emit = defineEmits<{ (e: 'change', payload: { time: string; period: string }): void }>()
+const emit = defineEmits<{ (e: 'change', payload: { time: string }): void }>()
 
 const el = ref<HTMLInputElement | null>(null)
 let fp: any = null
@@ -21,13 +21,13 @@ onMounted(() => {
   fp = flatpickr(el.value, {
     enableTime: true,
     noCalendar: true,
-    dateFormat: 'h:i K',
-    time_24hr: false,
+    dateFormat: 'H:i',
+    time_24hr: true,
     defaultDate: props.display,
     allowInput: false,
     onChange: (_sel: Date[], str: string) => {
-      const p = parseTime(str)
-      if (p) emit('change', p)
+      const t = parseTime24(str)
+      if (t) emit('change', { time: t })
     },
   })
 })

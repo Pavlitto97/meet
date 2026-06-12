@@ -4,16 +4,24 @@ import { all, one, run, db, logActivity, toBuffer } from './db';
 import { parseDataUrl } from './media';
 import { autoResizeForAvatar, normalizeSourceImage } from './degrade';
 
-export function listParticipants(groupId: number): any[] {
-  return all(
+/** Список учасників групи. deleted='only' → лише видалені (для відновлення). */
+export function listParticipants(groupId: number, deleted: 'active' | 'only' = 'active'): any[] {
+  const rows = all(
     'SELECT id, group_id, device_id, original_name, custom_name, ' +
       'source IS NOT NULL AS has_source, source_mime, ' +
       'avatar IS NOT NULL AS has_avatar, avatar_mime, ' +
       'avatar_end IS NOT NULL AS has_avatar_end, avatar_end_mime, ' +
-      'skipped, user_added, position, updated_at ' +
-      'FROM participants WHERE group_id = ? ORDER BY position',
+      'skipped, user_added, deleted, position, updated_at ' +
+      `FROM participants WHERE group_id = ? AND deleted ${deleted === 'only' ? '!=' : '='} 0 ORDER BY position`,
     [groupId]
   );
+  // original_name шаблонних слотів у БД — latin1-простір (байти шаблону); UI його
+  // лише показує, тож назовні віддаємо читабельний UTF-8. У user_added це вже
+  // звичайний UTF-8-рядок — конвертація б його покалічила.
+  return rows.map((r) => ({
+    ...r,
+    original_name: r.user_added ? r.original_name : Buffer.from(String(r.original_name), 'latin1').toString('utf8'),
+  }));
 }
 
 export type ImageWhich = 'start' | 'end' | 'source';
@@ -112,22 +120,38 @@ export function createParticipant(groupId: number, body: Record<string, any>): R
   return { id: r.lastInsertRowid, device_id: did };
 }
 
-export function deleteParticipant(id: number, hard = false): Record<string, any> {
-  if (hard) {
-    const row = one('SELECT user_added FROM participants WHERE id = ?', [id]);
-    if (!row) return { error: 'not found', _status: 404 };
-    if (!row.user_added) return { error: 'не можна видалити дефолтного учасника', _status: 400 };
-    run('DELETE FROM generations WHERE participant_id = ?', [id]);
+/**
+ * Видалення учасника (разом з його генераціями). Доданий вручну (user_added,
+ * `local/*`) — видаляється з БД назавжди. Дефолтний слот шаблону — м'яко
+ * (deleted=1 + скидання правок): плитка у рендері повертається до рідного
+ * вигляду збереженої сторінки, слот можна відновити.
+ */
+export function deleteParticipant(id: number): Record<string, any> {
+  const row = one('SELECT user_added FROM participants WHERE id = ?', [id]);
+  if (!row) return { error: 'not found', _status: 404 };
+  run('DELETE FROM generations WHERE participant_id = ?', [String(id)]);
+  if (row.user_added) {
     run('DELETE FROM participants WHERE id = ?', [id]);
     logActivity('participant.delete', `#${id}`);
   } else {
     run(
-      'UPDATE participants SET custom_name=NULL, source=NULL, source_mime=NULL, avatar=NULL, avatar_mime=NULL, ' +
+      'UPDATE participants SET deleted=1, custom_name=NULL, source=NULL, source_mime=NULL, avatar=NULL, avatar_mime=NULL, ' +
         'avatar_end=NULL, avatar_end_mime=NULL, updated_at=CURRENT_TIMESTAMP WHERE id = ?',
       [id]
     );
-    logActivity('participant.reset', `#${id}`);
+    logActivity('participant.soft_delete', `#${id}`);
   }
+  return { ok: true };
+}
+
+/** Повертає м'яко видалений дефолтний слот у список (у кінець порядку — щоб
+ *  не зіткнутися position-ом з активними рядками, перенумерованими reorder-ом). */
+export function restoreParticipant(id: number): Record<string, any> {
+  const row = one('SELECT group_id FROM participants WHERE id = ? AND deleted != 0', [id]);
+  if (!row) return { error: 'not found', _status: 404 };
+  const m = one('SELECT COALESCE(MAX(position), -1) AS m FROM participants WHERE group_id = ? AND deleted = 0', [row.group_id]);
+  run('UPDATE participants SET deleted=0, position=?, updated_at=CURRENT_TIMESTAMP WHERE id = ?', [Number(m?.m ?? -1) + 1, id]);
+  logActivity('participant.restore', `#${id}`);
   return { ok: true };
 }
 
