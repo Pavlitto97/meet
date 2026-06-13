@@ -4,7 +4,7 @@
  * піднімає авто-апдейтер. Дані — у app.getPath('userData').
  */
 import './quiet'; // приглушити node:sqlite ExperimentalWarning — мусить бути ПЕРШИМ
-import { app, BrowserWindow, protocol } from 'electron';
+import { app, BrowserWindow, Menu, protocol } from 'electron';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import log from 'electron-log';
@@ -99,6 +99,9 @@ async function installDevtools(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // Прибрати дефолтне меню Electron (File/Edit/View/Window) — застосунок без меню-бару
+  // на всіх платформах. На Windows/Linux це знімає меню-бар із вікна повністю.
+  Menu.setApplicationMenu(null);
   dotenv.config({ path: envPath() }); // креди з .env (до initDb, що сидить ключ із env)
   log.info('Meet Editor starting', { version: app.getVersion(), packaged: app.isPackaged });
   // Сплеш — одразу, ще до ініціалізації БД/протоколу. Під E2E вимкнено:
