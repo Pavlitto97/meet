@@ -36,8 +36,8 @@ const SPLASH_MIN_MS = 3000;
  */
 function createSplash(): BrowserWindow {
   const splash = new BrowserWindow({
-    width: 380,
-    height: 420,
+    width: 320,
+    height: 140,
     frame: false,
     transparent: true,
     resizable: false,

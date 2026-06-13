@@ -37,7 +37,7 @@ export function promptSeedPath(): string {
   return resourcePath('promt.md');
 }
 
-/** Сплеш-прелоадер (splash.html; splash.png лежить поруч). */
+/** Сплеш-прелоадер (splash.html — лише назва проекту, без зображень). */
 export function splashHtmlPath(): string {
   return resourcePath('splash.html');
 }
