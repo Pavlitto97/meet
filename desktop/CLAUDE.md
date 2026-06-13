@@ -62,20 +62,25 @@
   `https://api.githubcopilot.com/mcp/` з токеном `gh`. Дає Claude версіонування,
   PR-и, GitHub Actions/релізи прямо з сесії. Токен НЕ в репозиторії.
 
-## CI / збірки (GitHub Actions)
+## Релізи (локально) / збірки
 
-- **`.github/workflows/release.yml`** — тригер на тег `v*`: `electron-builder` збирає
-  **Windows NSIS** + **macOS dmg/zip** і публікує у **GitHub Releases** (`latest.yml` +
-  `.blockmap` + інсталятори) токеном `GITHUB_TOKEN` (Actions дає сам). Креди застосунку
-  (`OPENROUTER_API_KEY`, `GH_TOKEN`) беруться із **закоміченого** `desktop/.env`
-  (extraResources) — CI бачить їх лише бо `.env` у репо (`!desktop/.env` у `.gitignore`).
-- **`.github/workflows/ci.yml`** — тригер на PR/пуш: `npm run test:e2e` (білд +
-  Playwright) на `windows-latest` + `macos-latest`.
-- **Реліз (щоб оновлення прилетіло юзерам):** bump `version` → коміт → тег `vX.Y.Z`
-  (= version) → `git push origin v…` → Actions публікує → Windows-клієнти оновлюються
-  самі (10 c після старту / кожні 6 год / банер «Перезапустити»). **Повний покроковий
-  runbook** (передумови, два токени, «перший раз вручну», локальний реліз, чеклист) —
-  **`docs/RELEASE.md`**.
+> **GitHub Actions ВИМКНЕНО** (платні хвилини на приватному репо — рішення користувача):
+> `release.yml` і `ci.yml` лишаються в репо, але `disabled_manually` (повернути:
+> `gh workflow enable "CI"` / `"Release Desktop"` + робочий білінг). Релізимо **локально**.
+
+- **Реліз — локально з macOS** (electron-builder збирає і Windows-NSIS [x64], і Mac
+  dmg/zip, і публікує у GitHub Releases). Стисло: bump `version` → коміт → тег `vX.Y.Z`
+  (= version) → `npm run build` → `GH_TOKEN="$(gh auth token)" env -u ELECTRON_RUN_AS_NODE
+  npx electron-builder --win --mac --publish always` → `gh release edit vX.Y.Z
+  --draft=false --latest`. Далі Windows-клієнти оновлюються самі (10 c / 6 год / банер).
+  **Повний runbook (два токени, передумови, «перший раз вручну», чеклист) — `docs/RELEASE.md`.**
+- **Креди застосунку** (`OPENROUTER_API_KEY`, `GH_TOKEN` для апдейту) — із закоміченого
+  `desktop/.env` (`!desktop/.env` у `.gitignore`), бейкаються в інсталятор. Токен
+  ПУБЛІКАЦІЇ — окремий (`gh auth token`, scope `repo`), лише в shell, у застосунок не йде.
+- ⚠️ **win-арх = x64 явно** (`electron-builder.yml`): default-арх = арх ХОСТА, тож на
+  Apple Silicon `--win` без цього зібрав би arm64 (і `latest.yml` вказав би на arm64).
+- electron-builder створює реліз як **draft** → крок `--draft=false` обовʼязковий, інакше
+  клієнти його не побачать. Реліз має містити `latest.yml` (Windows-фід апдейту).
 - ⚠️ **`scripts/ensure-electron.mjs` (postinstall) обовʼязковий, не прибирати:**
   npm-пакет `electron@42` НЕ має власного postinstall, а його `install.js` на CI
   часом виходить ДО завершення async-завантаження → бінарник відсутній, і

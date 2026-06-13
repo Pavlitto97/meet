@@ -36,8 +36,12 @@ publish:
   private: true
 
 win:
+  # Явний x64: default-арх electron-builder = арх ХОСТА, тож на Apple Silicon `--win`
+  # без цього зібрав би arm64 (і latest.yml вказував би на arm64 — не на x64, який
+  # потрібен 99% Windows-юзерів). x64 працює і на Windows-ARM через емуляцію.
   target:
-    - nsis
+    - target: nsis
+      arch: [x64]
   artifactName: ${productName}-${version}-${arch}.${ext}
 
 nsis:

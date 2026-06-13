@@ -6,6 +6,34 @@
 
 ---
 
+## 2026-06-13 — Перший реліз v0.1.1 (локальна публікація) + Actions вимкнено
+
+**Навіщо:** користувач не хоче платних GitHub Actions — релізимо **локально** з macOS.
+Зроблено перший деплой і переведено флоу на локальну публікацію.
+
+- **Перший реліз опубліковано:** v0.1.1 у GitHub Releases (Pavlitto97/meet) локальним
+  `electron-builder --win --mac --publish always` (токен публікації — `gh auth token`,
+  scope `repo`). Ассети: `Meet-Editor-0.1.1-x64.exe` + `.blockmap` + **`latest.yml`**
+  (Windows авто-апдейт-фід), mac dmg/zip (arm64+x64) + `latest-mac.yml`. Реліз
+  опубліковано (`gh release edit --draft=false --latest`).
+- **`electron-builder.yml`** — `win.target` запінено на `arch: [x64]`. Причина:
+  default-арх electron-builder = арх ХОСТА, тож на Apple Silicon перший `--win` зібрав
+  arm64, і `latest.yml` указав на arm64 (не на x64, потрібний ~99% Windows). Перебілд
+  x64 виправив `latest.yml`; orphan arm64-Windows ассети видалено з релізу.
+- **GitHub Actions вимкнено** — `gh workflow disable "CI"` + `"Release Desktop"`
+  (`disabled_manually`, оборотно). Усі рани падали на білінгу ще з 2 червня; релізи й
+  тести тепер локальні. Воркфлоу лишаються в репо як референс.
+- **`docs/RELEASE.md`** переписано під локальний флоу як основний (build+publish з
+  gh-токеном, обовʼязковий `--draft=false`, два токени, win-x64-нюанс); **`CLAUDE.md`**
+  секцію «CI / збірки» → «Релізи (локально)».
+
+**Як перевірено:** `gh release view v0.1.1` → `isDraft:false`, є `latest.yml` +
+`Meet-Editor-0.1.1-x64.exe` + `.blockmap` + mac-ассети; завантажений `latest.yml`
+вказує на `Meet-Editor-0.1.1-x64.exe` (sha512/size збігаються); `gh workflow list` →
+обидва `disabled_manually`.
+
+---
+
 ## 2026-06-13 — `.env` трекається в репо + runbook релізу (`docs/RELEASE.md`)
 
 **Навіщо:** користувач задав `GH_TOKEN` у `.env` і попросив задокументувати для агента,
