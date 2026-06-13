@@ -4,6 +4,10 @@ data.db-shm
 data.db-wal
 .DS_Store
 .env
+# desktop/.env навмисно ТРЕКАЄТЬСЯ (рішення проєкту — креди в приватному репо):
+# CI (release.yml) бере з нього GH_TOKEN (авто-апдейт) + OPENROUTER_API_KEY при
+# білді. Решта .env (напр. кореневий PHP) лишаються ігнорованими.
+!desktop/.env
 .playwright-mcp/
 gen-approve-card.png
 api-render-*.png
@@ -11,3 +15,6 @@ render-with-sanya-avatar.png
 preview-*.png
 sanya-*.png
 verify-*.png
+# Loose dev screenshots / AI generations dumped at repo root (root-anchored).
+/Gemini_Generated_Image*.png
+/image_*.png
