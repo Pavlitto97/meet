@@ -126,6 +126,11 @@ a:hover { text-decoration: underline; }
 }
 .admin-head .links a:hover { background: var(--primary-hover); text-decoration: none; }
 .admin-head .links .links-label { align-self: center; color: var(--muted); font-size: 13px; margin-right: 2px; }
+.admin-head h1 .app-version {
+  font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: .3px;
+  background: var(--surface-2); border: 1px solid var(--surface-3);
+  padding: 1px 8px; border-radius: 999px; vertical-align: middle; margin-left: 4px;
+}
 
 /* ─── Вкладки (Material Tabs) ──────────────────────────────────────────────────── */
 .tabs {

@@ -1,7 +1,7 @@
 <template>
   <div class="admin-shell">
     <div class="admin-head">
-      <h1><span class="msym">videocam</span> Meet Editor</h1>
+      <h1><span class="msym">videocam</span> Meet Editor <span class="app-version" :title="`Версія застосунку: ${appVersion}`">v{{ appVersion }}</span></h1>
       <div class="links">
         <span class="links-label">Перегляд зустрічі:</span>
         <a href="#" title="Відкрити рендер початку зустрічі" @click.prevent="preview('start')"><span class="msym">line_start_circle</span> Початок зустрічі</a>
@@ -22,13 +22,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, provide } from 'vue'
+import { ref, provide, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ImageModal from '@/components/admin/ImageModal.vue'
 import { AdminModalKey, type ModalConfig } from '@/components/admin/adminModal'
+import { useUpdatesStore } from '@/stores/updates'
 
 const route = useRoute()
 const router = useRouter()
+
+// Версія застосунку — у хедер, завжди на видноті (app.getVersion() з main через
+// updates-store). Детальна картка апдейту лишається в Налаштуваннях.
+const appVersion = computed(() => useUpdatesStore().status?.currentVersion ?? '…')
 
 // Активність табу — за meta.tab (так «Групи» лишається активним і в /admin/groups/5).
 const tabs = [
