@@ -541,6 +541,33 @@ button.thumb.as-btn:hover { border-color: var(--accent); color: var(--accent); b
 .toast.ok  { border-left-color: var(--ok); }
 .toast.err { border-left-color: var(--err); }
 
+/* ─── Банер авто-апдейту (глобальний, UpdateBanner.vue) ───────────────────────── */
+.update-banner {
+  position: fixed; right: 24px; bottom: 24px; z-index: 210;
+  display: flex; align-items: center; gap: 14px;
+  max-width: min(440px, calc(100vw - 48px));
+  background: var(--surface-hi); color: var(--text);
+  padding: 14px 16px; border-radius: var(--r-md);
+  box-shadow: var(--elev-3); border-left: 4px solid var(--accent);
+}
+.update-banner.error { border-left-color: var(--err); }
+.update-banner .upd-ico { font-size: 24px; color: var(--accent); flex: 0 0 auto; }
+.update-banner.error .upd-ico { color: var(--err); }
+.update-banner .upd-body { min-width: 0; flex: 1 1 auto; }
+.update-banner .upd-title { font-size: 14px; font-weight: 500; }
+.update-banner .upd-sub {
+  font-size: 12.5px; color: var(--on-surface-variant); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.update-banner .upd-bar { height: 4px; border-radius: var(--r-full); background: var(--surface-3); margin-top: 8px; overflow: hidden; }
+.update-banner .upd-bar > i { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width var(--dur) var(--ease); }
+.update-banner .upd-go { flex: 0 0 auto; }
+.update-banner .upd-x { flex: 0 0 auto; background: transparent; min-width: 30px; }
+.update-banner .upd-x:hover { background: var(--state-hover); }
+.upd-enter-active, .upd-leave-active { transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease); }
+.upd-enter-from, .upd-leave-to { opacity: 0; transform: translateY(12px); }
+
 /* ─── Flatpickr (темний + Google blue) ────────────────────────────────────────── */
 .flatpickr-calendar { background: var(--surface-hi); box-shadow: var(--elev-3); border-radius: var(--r-md); }
 .flatpickr-day.selected, .flatpickr-day.selected:hover { background: var(--accent); border-color: var(--accent); color: var(--on-primary); }

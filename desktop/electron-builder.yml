@@ -44,9 +44,25 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName} ${version}
+  # Деінсталяція ЛИШАЄ локальні дані (рішення проєкту): БД, аватарки, скріни й
+  # кешований OpenRouter-ключ у %APPDATA%/Meet Editor — переустановка їх відновлює.
+  # deleteAppDataOnUninstall=false — це дефолт electron-builder; задано явно як
+  # документ наміру. Як стерти дані вручну — у docs/CHANGELOG.md / README.md.
+  deleteAppDataOnUninstall: false
 
-# macOS: built unsigned for now (per project decision). Auto-update on mac
-# requires Developer ID + notarization (Squirrel.Mac refuses unsigned) — add later.
+# macOS: збираємо БЕЗ підпису (рішення проєкту). Авто-апдейт на mac вимкнено
+# (Squirrel.Mac відмовляє непідписаним) — вмикається разом із підписом.
+# Щоб увімкнути підпис+нотаризацію+mac-апдейт:
+#   1) прибрати `identity: null` нижче;
+#   2) у CI (release.yml) задати секрети CSC_LINK / CSC_KEY_PASSWORD (Developer ID)
+#      та APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID (нотаризація);
+#   3) запускати клієнт із env MEET_MAC_UPDATES=1 (гейт в updater.ts).
+# entitlements нижче потрібні V8 (JIT) для нотаризованих білдів; на unsigned
+# ігноруються (крок підпису не виконується), тож тримати їх тут безпечно.
 mac:
   target:
     - target: dmg
@@ -55,3 +71,7 @@ mac:
       arch: [arm64, x64]
   category: public.app-category.utilities
   identity: null
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist

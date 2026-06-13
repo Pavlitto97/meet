@@ -74,6 +74,21 @@
       </div>
       <p class="muted" style="margin:8px 0 0">У галереї генерація лишається в оригінальному розмірі. Коли приймаєш її як аватар (→ Початок / → Кінець), фото пропорційно зменшується (cover, лише вниз), щоб покрити цю рамку.</p>
     </div>
+
+    <div class="card">
+      <h3><span class="msym sm">system_update</span> Оновлення додатку</h3>
+      <div class="flex">
+        <div class="field"><label>Поточна версія</label><span class="value mono">{{ currentVersion }}</span></div>
+        <div class="field"><label>Статус</label><span class="value" :class="updStatusCls">{{ updStatusText }}</span></div>
+        <div class="field" style="align-self:flex-end">
+          <div class="flex">
+            <button type="button" class="secondary btn-sm" :disabled="updChecking" @click="checkUpdates"><span class="msym sm">refresh</span> Перевірити оновлення</button>
+            <button v-if="updReady" type="button" class="btn-sm" @click="installUpdate"><span class="msym sm">restart_alt</span> Перезапустити й оновити</button>
+          </div>
+        </div>
+      </div>
+      <p class="muted" style="margin:8px 0 0">{{ updHint }}</p>
+    </div>
   </section>
 </template>
 
@@ -83,9 +98,48 @@ import TimePicker from '@/components/TimePicker.vue'
 import { api, call } from '@/lib/api'
 import { randomMeetingCode } from '@/lib/util'
 import { useUiStore } from '@/stores/ui'
+import { useUpdatesStore } from '@/stores/updates'
 import type { Settings, Credits } from '@/types'
 
 const ui = useUiStore()
+
+// ── Авто-апдейт (стан із main через store/updates) ──
+const updates = useUpdatesStore()
+const currentVersion = computed(() => updates.status?.currentVersion ?? '—')
+const updChecking = computed(() => updates.status?.state === 'checking')
+const updReady = computed(() => updates.status?.state === 'downloaded')
+const updStatusText = computed(() => {
+  const s = updates.status
+  switch (s?.state) {
+    case 'checking': return 'перевірка…'
+    case 'available': return `доступне ${s.version ?? ''}`.trim()
+    case 'downloading': return `завантаження ${Math.round(s.percent ?? 0)}%`
+    case 'downloaded': return `готово до встановлення ${s.version ?? ''}`.trim()
+    case 'not-available': return 'актуальна версія'
+    case 'error': return 'помилка перевірки'
+    case 'disabled': return 'вимкнено'
+    default: return 'не перевірялось'
+  }
+})
+const updStatusCls = computed(() => {
+  const st = updates.status?.state
+  if (st === 'not-available' || st === 'downloaded') return 'status ok'
+  if (st === 'error') return 'status err'
+  return ''
+})
+const updHint = computed(() => {
+  const s = updates.status
+  if (s?.state === 'disabled') return s.message ?? 'Оновлення вимкнено для цієї збірки.'
+  if (s?.state === 'error') return `Помилка: ${s.message ?? 'невідома'}. Перевірте звʼязок і токен у .env (приватний репо).`
+  return 'Оновлення завантажуються у фоні з GitHub Releases. Коли готове — натисніть «Перезапустити й оновити» (або застосується при наступному виході). Windows — авто-апдейт; macOS — поки вручну (потрібен підпис Apple).'
+})
+function checkUpdates(): void {
+  void updates.check()
+  ui.toast('Перевірка оновлень…')
+}
+function installUpdate(): void {
+  void updates.install()
+}
 const loaded = ref(false)
 const meetingCode = ref('')
 const startDisplay = ref('13:41')
@@ -174,5 +228,8 @@ async function load(): Promise<void> {
   loaded.value = true
 }
 
-onMounted(load)
+onMounted(() => {
+  void updates.init() // idempotent (guard у store) — на випадок прямого заходу в Налаштування
+  void load()
+})
 </script>

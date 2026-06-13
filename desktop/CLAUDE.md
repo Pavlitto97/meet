@@ -64,12 +64,18 @@
 
 ## CI / збірки (GitHub Actions)
 
-- **`.github/workflows/release.yml`** — тригер на тег `v*`: `electron-builder`
-  публікує **Windows NSIS** (авто-апдейт) і **macOS dmg/zip** у GitHub Releases.
+- **`.github/workflows/release.yml`** — тригер на тег `v*`: `electron-builder` збирає
+  **Windows NSIS** + **macOS dmg/zip** і публікує у **GitHub Releases** (`latest.yml` +
+  `.blockmap` + інсталятори) токеном `GITHUB_TOKEN` (Actions дає сам). Креди застосунку
+  (`OPENROUTER_API_KEY`, `GH_TOKEN`) беруться із **закоміченого** `desktop/.env`
+  (extraResources) — CI бачить їх лише бо `.env` у репо (`!desktop/.env` у `.gitignore`).
 - **`.github/workflows/ci.yml`** — тригер на PR/пуш: `npm run test:e2e` (білд +
   Playwright) на `windows-latest` + `macos-latest`.
-- Реліз: підняти `version` у `package.json` → тег `vX.Y.Z` → пуш → Actions збере й
-  опублікує. `electron-updater` на клієнтах читає ці релізи.
+- **Реліз (щоб оновлення прилетіло юзерам):** bump `version` → коміт → тег `vX.Y.Z`
+  (= version) → `git push origin v…` → Actions публікує → Windows-клієнти оновлюються
+  самі (10 c після старту / кожні 6 год / банер «Перезапустити»). **Повний покроковий
+  runbook** (передумови, два токени, «перший раз вручну», локальний реліз, чеклист) —
+  **`docs/RELEASE.md`**.
 - ⚠️ **`scripts/ensure-electron.mjs` (postinstall) обовʼязковий, не прибирати:**
   npm-пакет `electron@42` НЕ має власного postinstall, а його `install.js` на CI
   часом виходить ДО завершення async-завантаження → бінарник відсутній, і
@@ -80,13 +86,25 @@
 
 ## Поточні рішення / обмеження
 
-- **macOS — без підпису** (`electron-builder.yml`: `identity: null`,
-  `CSC_IDENTITY_AUTO_DISCOVERY:false`). Авто-апдейт на mac **вимкнено**: Squirrel.Mac
-  відмовляє непідписаним білдам. Щоб увімкнути — потрібні **Apple Developer ID +
-  нотаризація** (сертифікати в секрети Actions: `CSC_LINK`/`CSC_KEY_PASSWORD` +
-  `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID`), тоді знести `identity:null`.
+- **macOS — без підпису** (`electron-builder.yml`: `identity: null`). Авто-апдейт на
+  mac **вимкнено** (Squirrel.Mac відмовляє непідписаним): `updater.ts` віддає стан
+  `disabled` (без помилок), а UI це показує. Щоб увімкнути — потрібні **Apple Developer
+  ID + нотаризація**: (1) знести `identity:null`; (2) секрети Actions `CSC_LINK`/
+  `CSC_KEY_PASSWORD` + `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` (вже
+  прокинуті в `release.yml`); (3) клієнт із env `MEET_MAC_UPDATES=1`. Entitlements для
+  hardened runtime — `build/entitlements.mac.plist` (на unsigned ігноруються).
   Windows-авто-апдейт працює без підпису.
-- `.env` свідомо комітиться (рішення проєкту — креди в приватному репо).
+- **Авто-апдейт — повний цикл із UI:** `updater.ts` тримає єдиний `UpdateStatus` і
+  пушить його в рендер (`update:status`); IPC `update:check`/`update:install`/
+  `update:get-state`. Рендер: `stores/updates.ts` + глобальний `UpdateBanner.vue`
+  (завантаження/готово→«Перезапустити й оновити»/помилка) + картка «Оновлення додатку»
+  в Налаштуваннях (версія, ручна перевірка). Приватний репо: токен `GH_TOKEN`/
+  `GITHUB_TOKEN` із `.env` → `autoUpdater.addAuthHeader` (лишається в main).
+- **Деінсталяція ЛИШАЄ дані** (рішення користувача): NSIS `deleteAppDataOnUninstall:
+  false` — БД/аватарки/скріни/кеш-ключ у `%APPDATA%\Meet Editor` переживають видалення.
+  macOS — `scripts/uninstall-macos.sh` (`--purge` для повного стирання).
+- `.env` свідомо комітиться (рішення проєкту — креди в приватному репо). Для
+  авто-апдейту приватного репо в нього додають `GH_TOKEN` (PAT, Contents: Read).
 
 ## Доменна модель (групи учасників + source-зображення)
 
@@ -142,14 +160,16 @@
   DevTools, `MEET_USERDATA`-оверрайд для тестів), `protocol.ts` (`app://` → REST+статика),
   `http.ts`/`routes.ts` (роутер), `services/*` (db/groups/participants/generations/
   render/screenshots/degrade/openrouter/settings/admin/media/paths/config),
-  `updater.ts` (electron-updater).
-- `src/preload/index.ts` — місток у рендер (contextIsolation).
+  `updater.ts` (electron-updater: статус-модель + IPC `update:*`).
+- `src/preload/index.ts` — місток у рендер (contextIsolation): `meet.versions` +
+  `meet.updates` (getState/check/install/onStatus). Тип — дзеркало в `renderer/env.d.ts`.
 - `renderer/` — Vue 3 + Vite SPA (hash-роутинг), білд у `renderer/dist`. Вкладки
   адмінки: **Групи** (`GroupsTab` → `GroupDetailTab` — учасники групи з трьома
   зображеннями Оригінал/Початок/Кінець), Генерації (фільтри група/учасник/статус,
   бейджі групи + «застосовано», діплінк `?participant=N`), Скріни (з назвою групи),
-  Налаштування (окрема плашка «API-токени»), Промт. Хедер — лише «Перегляд
-  зустрічі: Початок/Кінець» (download HTML і лабораторію прибрано).
+  Налаштування (плашки «API-токени» + «Оновлення додатку»), Промт. Хедер — лише
+  «Перегляд зустрічі: Початок/Кінець» (download HTML і лабораторію прибрано).
+  Глобально (App.vue): `UpdateBanner.vue` (банер апдейтера) + `stores/updates.ts`.
 - `resources/` — `index.html`(+`.bak`), `promt.md` (ship як extraResources).
 - `e2e/` — Playwright-тести (`helpers.ts` + smoke/flows/live-generation).
   `out/` — компіляція main/preload. `dist/` — вивід electron-builder.

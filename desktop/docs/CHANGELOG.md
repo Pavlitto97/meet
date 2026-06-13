@@ -6,6 +6,84 @@
 
 ---
 
+## 2026-06-13 — `.env` трекається в репо + runbook релізу (`docs/RELEASE.md`)
+
+**Навіщо:** користувач задав `GH_TOKEN` у `.env` і попросив задокументувати для агента,
+як білдити/піднімати версії, щоб авто-апдейт працював у юзерів. При перевірці виявилось:
+`desktop/.env` був **gitignored і не закомічений** — тобто CI-релізи (`release.yml`)
+збирались би БЕЗ токена (extraResources `.env` відсутній на раннері), і авто-апдейт у
+юзерів мовчки не працював би (локально непомітно — `.env` лежить на диску).
+
+- **`.gitignore`** — додано `!desktop/.env` (розігноровано саме цей файл; кореневий PHP
+  `.env` лишається ігнорованим). **`desktop/.env`** force-added і закомічено (рішення
+  користувача — креди в приватному репо). Токен перевірено: `GET …/releases` → **200**,
+  fine-grained PAT, формат заголовка `token …` (як у `updater.ts::addAuthHeader`).
+- **`docs/RELEASE.md`** (новий) — агентський runbook: як працює апдейт; два токени
+  (`GITHUB_TOKEN` публікує / `GH_TOKEN` у `.env` читає); передумови; покрокова інструкція
+  (bump `version` → коміт → тег `vX.Y.Z` = version → push → Actions → перевірка ассетів
+  `latest.yml`/`.exe`/`.blockmap`); залізні правила («перший раз вручну», версія росте,
+  mac unsigned); локальний білд/реліз; чеклист «оновлення не приходить».
+- **`CLAUDE.md`** — секцію «CI / збірки» стиснуто й додано вказівник на `docs/RELEASE.md`;
+  пояснено, що `.env` закомічений саме заради CI.
+
+**Як перевірено:** `git ls-files desktop/.env` → трекається; `git check-ignore
+desktop/.env` → не ігнорується; коміт `9b5d373` містить рівно 2 файли (`.env` +
+`.gitignore`); токен віддає HTTP 200 на релізи приватного репо.
+
+---
+
+## 2026-06-13 — Авто-апдейт: повний цикл із UI; білд і деінсталяція; mac-підпис (скаффолд)
+
+**Навіщо:** користувач попросив інтегрувати авто-апдейт «з гіта білдів» (фід уже
+був, але рендер його НЕ споживав — фіча була невидима: ні «доступне оновлення», ні
+прогресу, ні «перезапустити й оновити», ні ручної перевірки), продумати функціонал
+білдів і перевірити деінсталяцію. Бібліотеки підключити, конфіг (токени/підпис)
+користувач задасть сам.
+
+- **`src/main/updater.ts`** (перероблено) — єдина модель статусу `UpdateStatus`,
+  яку main пушить у рендер каналом `update:status` при кожній зміні. IPC-хендлери
+  `update:check` (ручна перевірка), `update:install` (`quitAndInstall`, лише зі стану
+  `downloaded`), `update:get-state` (синхронізація UI при монтуванні). Перша перевірка
+  через 10 c, далі кожні 6 год; `autoDownload`+`autoInstallOnAppQuit`. Приватний репо:
+  токен `GH_TOKEN`/`GITHUB_TOKEN` з оточення (dotenv із `.env`) → `addAuthHeader`
+  (лишається в main). Гейти: dev і macOS-без-підпису → стан `disabled` (без шумних
+  помилок); macOS вмикається env `MEET_MAC_UPDATES=1`.
+- **`src/preload/index.ts`** — міст `meet.updates` (`getState`/`check`/`install`/
+  `onStatus`); `onUpdate` прибрано. Тип `UpdateStatus` (`import type` з main, стирається).
+- **`renderer/env.d.ts`** — типізація `window.meet.updates` (дзеркало main-типу).
+- **`renderer/src/stores/updates.ts`** (новий) — pinia-стор: підписка на `onStatus`
+  + початковий `getState`, `check()`/`install()`. Монтується раз із App.vue (idempotent).
+- **`renderer/src/components/UpdateBanner.vue`** (новий) + **App.vue** — глобальний
+  банер: `downloading` (прогрес), `downloaded` (кнопка «Перезапустити й оновити»),
+  `error` (повідомлення). Інші стани — без банера (видно в Налаштуваннях). Стилі —
+  `admin.css` (`.update-banner`, у стилі Meet/MD).
+- **`renderer/src/components/admin/SettingsTab.vue`** — картка «Оновлення додатку»:
+  поточна версія, статус, «Перевірити оновлення», «Перезапустити й оновити».
+- **`electron-builder.yml`** — NSIS: `createDesktopShortcut`/`createStartMenuShortcut`/
+  `shortcutName`/`uninstallDisplayName` + `deleteAppDataOnUninstall: false` (рішення
+  користувача — деінсталяція ЛИШАЄ дані). macOS: скаффолд підпису — `hardenedRuntime`,
+  `entitlements` → `build/entitlements.mac.plist` (новий; на unsigned ігнорується),
+  `identity: null` лишено (білд unsigned, не ламається).
+- **`.github/workflows/release.yml`** — у mac-крок прокинуто секрети `CSC_LINK`/
+  `CSC_KEY_PASSWORD`/`APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` (no-op,
+  поки `identity: null`); коментар-інструкція ввімкнення.
+- **`scripts/uninstall-macos.sh`** (новий) — опційний деінсталятор mac: за замовч.
+  лише `.app`, `--purge` — ще й локальні дані/кеш.
+- **Документація** — `README.md` (білд/реліз/деінсталяція, runtime-`GH_TOKEN`),
+  `desktop/CLAUDE.md` (рішення + структура), цей запис.
+
+**Як перевірено:** `npm run build` (vite+tsc) і `vue-tsc --noEmit` — чисто;
+`npx playwright test smoke+flows` — **18/18** (вкладка «Налаштування» з новою карткою
+рендериться); `electron-builder --win --x64` — конфіг валідний, зібрано
+`Meet Editor-0.1.1-x64.exe` + `latest.yml` (фід: version/sha512/size) + `.blockmap`,
+**уанінсталятор згенеровано й вшито** (`__uninstaller.exe`); `electron-builder --mac
+--dir` — `.app` пакується (підпис пропущено через `identity: null` — mac-скаффолд
+інертний, без регресу); `bash -n` скрипта — ок. Реальний прогон оновлення між двома
+релізами і Windows-деінсталяцію (дані лишаються в `%APPDATA%\Meet Editor`) треба
+звірити на Windows-машині — на macOS не відтворити.
+
+---
+
 ## 2026-06-12 — Панель «Люди»: завжди буквені кружечки (фото — лише у плитках)
 
 **Навіщо:** вимога користувача — у списку «Люди» НІКОМУ не показувати фото,

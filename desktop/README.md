@@ -62,18 +62,45 @@ GH_TOKEN=github_pat_...          # fine-grained PAT, цей репо, Contents: 
 
 ```bash
 npm run dist:win     # NSIS .exe (+latest.yml, .blockmap) — авто-апдейт працює
-npm run dist:mac     # dmg + zip (universal arm64+x64), unsigned
-npm run publish      # build + electron-builder --publish always
+npm run dist:mac     # dmg + zip (arm64 + x64), unsigned
+npm run publish      # build + electron-builder --publish always (потрібен GH_TOKEN)
 ```
 
-CI: `.github/workflows/release.yml` — пуш тегу `vX.Y.Z` білдить на `windows-latest`
-+ `macos-latest` і публікує в Releases (через `GITHUB_TOKEN`).
+**Реліз:** підняти `version` у `package.json` → тег `vX.Y.Z` → пуш. CI
+`.github/workflows/release.yml` білдить на `windows-latest` + `macos-latest` і
+публікує у GitHub Releases (`GITHUB_TOKEN`). Тег має збігатися з `version`.
+electron-builder сам кладе у реліз `latest.yml`/`latest-mac.yml` + `.blockmap`
+(диференційні апдейти) — фід, який читає клієнт.
+
+**Як клієнт оновлюється** (`src/main/updater.ts`, electron-updater): перевірка
+релізів приватного репо через 10 c після старту і далі кожні 6 год; доступне
+оновлення тихо качається у фоні. Коли завантажено — рендер показує банер
+**«Перезапустити й оновити»** (`UpdateBanner.vue`), інакше воно застосовується при
+наступному виході. Поточна версія, ручна перевірка і кнопка перезапуску — у
+**Налаштування → Оновлення додатку**. Приватний репо вимагає, щоб у клієнта в `.env`
+був `GH_TOKEN` (інакше перевірка → 404, UI покаже помилку). Токен лишається в main,
+у рендер не потрапляє (IPC-канали `update:check`/`update:install`/`update:get-state`
++ пуш `update:status`).
 
 - **Windows:** авто-апдейт працює і без підпису (юзер бачить попередження SmartScreen).
-- **macOS:** Squirrel.Mac **відмовляє непідписаним апдейтам** → поки збираємо unsigned,
-  Mac-юзери ставлять вручну (і проходять Gatekeeper). Тихий авто-апдейт на Mac
-  увімкнеться разом з Apple Developer ID + нотаризацією (одне поле `mac.identity`
-  в `electron-builder.yml` + секрети нотаризації в CI).
+- **macOS:** Squirrel.Mac **відмовляє непідписаним апдейтам** → поки unsigned, апдейт
+  вимкнено (стан `disabled`, без помилок), Mac-юзери ставлять вручну. Увімкнути тихий
+  mac-апдейт:
+  1. прибрати `identity: null` у `electron-builder.yml` (entitlements уже на місці);
+  2. додати секрети `CSC_LINK`/`CSC_KEY_PASSWORD` + `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` у репо;
+  3. запускати клієнт із env `MEET_MAC_UPDATES=1` (гейт в `updater.ts`).
+
+## Деінсталяція
+
+- **Windows (NSIS):** «Установка та видалення програм» → *Meet Editor* → Видалити
+  (або `Uninstall Meet Editor.exe` у теці встановлення). Деінсталятор **лишає**
+  локальні дані (БД, аватарки, скріни, кешований ключ) у `%APPDATA%\Meet Editor` —
+  рішення проєкту (`deleteAppDataOnUninstall: false`). Стерти вручну: видалити теку
+  `%APPDATA%\Meet Editor`.
+- **macOS:** перетягнути `Meet Editor.app` у кошик. Залишкові дані —
+  `~/Library/Application Support/Meet Editor` (+ `Logs`/`Caches`/`Preferences`).
+  Помічник: `bash scripts/uninstall-macos.sh` (видалити лише .app) або
+  `bash scripts/uninstall-macos.sh --purge` (ще й стерти всі локальні дані).
 
 ## Дебаг (рекомендований сетап для AI-агента)
 
@@ -98,7 +125,7 @@ src/main/
   protocol.ts         ← serve_file + диспетч REST через app://
   http.ts             ← http.php: MeetRequest/MeetResponse, route(), dispatch()
   routes.ts           ← routes.php: уся REST-поверхня
-  updater.ts          ← electron-updater + electron-log
+  updater.ts          ← electron-updater + electron-log (статус-модель + IPC update:*)
   services/
     config.ts         ← config.php (latin1→utf8 mojibake, дефолти, emoji-мапа)
     paths.ts          ← шляхи (userData / resources)
