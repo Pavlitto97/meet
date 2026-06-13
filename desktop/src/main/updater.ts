@@ -98,9 +98,14 @@ export function initUpdater(): void {
   });
   ipcMain.handle('update:install', () => {
     if (status.state !== 'downloaded') return false;
-    log.info('updater: quitAndInstall за запитом рендера');
+    log.info('updater: quitAndInstall (silent) за запитом рендера');
     // setImmediate — дати IPC відповісти до виходу процесу.
-    setImmediate(() => autoUpdater.quitAndInstall());
+    // quitAndInstall(isSilent=true, isForceRunAfter=true): тихе встановлення (NSIS `/S`,
+    // БЕЗ майстра-інсталятора) + примусовий перезапуск після. Без прапора isSilent
+    // electron-updater запускає NSIS із повним UI — користувач бачив «майстер установки»
+    // і помилку «не вдалося закрити Meet Editor». perMachine:false (per-user) → тихе
+    // встановлення без UAC. Сам апдейтер закриває застосунок, тож гонки із закриттям нема.
+    setImmediate(() => autoUpdater.quitAndInstall(true, true));
     return true;
   });
 
