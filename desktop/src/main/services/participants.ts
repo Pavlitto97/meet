@@ -1,5 +1,6 @@
 /** CRUD учасників. Учасник живе всередині групи (groups.ts); ідентифікатор — числовий id. */
 import { randomBytes } from 'node:crypto';
+import sharp from 'sharp';
 import { all, one, run, db, logActivity, toBuffer } from './db';
 import { parseDataUrl } from './media';
 import { autoResizeForAvatar, normalizeSourceImage } from './degrade';
@@ -39,6 +40,56 @@ export function participantImage(id: number, which: ImageWhich = 'start'): [Buff
   const blob = toBuffer(row?.blob);
   if (!row || blob === null || !row.mime) return null;
   return [blob, row.mime];
+}
+
+/**
+ * Ручний кроп ВЛАСНОГО зображення учасника — коли немає генерації, з якої різати
+ * (аватарку завантажено вручну): вирізає область `from`-зображення (start|end|
+ * source) і ставить її аватаркою `which` (start|end). Дзеркало cropGeneration,
+ * але джерело — самі байти учасника. Координати — у пікселях `from`-зображення;
+ * клемпляться у межі. Результат проходить autoResizeForAvatar (downscale під плитку).
+ */
+export async function cropParticipantImage(
+  id: number,
+  from: ImageWhich,
+  which: 'start' | 'end',
+  rect: { x: number; y: number; width: number; height: number }
+): Promise<Record<string, any>> {
+  const src = participantImage(id, from);
+  if (!src) return { error: `немає зображення «${from}» для кропу`, _status: 400 };
+  const img = src[0];
+
+  let W = 0;
+  let H = 0;
+  try {
+    const meta = await sharp(img).metadata();
+    W = meta.width ?? 0;
+    H = meta.height ?? 0;
+  } catch {
+    return { error: 'не вдалося прочитати зображення', _status: 500 };
+  }
+  if (W < 2 || H < 2) return { error: 'бите зображення', _status: 500 };
+
+  const x = Math.max(0, Math.min(Math.round(rect.x), W - 1));
+  const y = Math.max(0, Math.min(Math.round(rect.y), H - 1));
+  const w = Math.max(1, Math.min(Math.round(rect.width), W - x));
+  const h = Math.max(1, Math.min(Math.round(rect.height), H - y));
+  if (w < 8 || h < 8) return { error: 'занадто мала область (мінімум 8×8 px)', _status: 400 };
+
+  let cropped: Buffer;
+  try {
+    cropped = await sharp(img).extract({ left: x, top: y, width: w, height: h }).png().toBuffer();
+  } catch {
+    return { error: 'не вдалося обрізати зображення', _status: 500 };
+  }
+  const [avBlob, avMime] = await autoResizeForAvatar(cropped, 'image/png');
+
+  const [blobCol, mimeCol] = which === 'end' ? ['avatar_end', 'avatar_end_mime'] : ['avatar', 'avatar_mime'];
+  const r = run(`UPDATE participants SET ${blobCol}=?, ${mimeCol}=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, [avBlob, avMime, id]);
+  if (r.changes === 0) return { error: 'учасника не знайдено', _status: 404 };
+
+  logActivity('participant.crop', `#${id} ${from}→${which} (${w}x${h}@${x},${y})`);
+  return { ok: true, x, y, width: w, height: h };
 }
 
 /** Оновлює дозволені поля учасника. {ok} / {error,_status}. */

@@ -157,7 +157,13 @@ export function extractImage(resp: any): [string, Buffer] {
       }
     }
   }
+  const text = extractText(msg);
   const finish = choices[0]?.finish_reason ?? null;
-  const hardBlock = !!msg.refusal || finish === 'content_filter';
-  throw new EmptyImageError(extractText(msg), finish, !hardBlock);
+  // Жорсткий блок (ретрай не врятує) — лише коли модель ЯВНО відмовила: є поле
+  // refusal або будь-який пояснювальний текст. content_filter БЕЗ тексту Gemini
+  // нерідко віддає транзієнтно (спорадичний фолс-позитив safety-фільтра) — такий
+  // порожній кадр вважаємо ретраябельним (runGeneration повторить його до
+  // innerAttempts разів на кожній маршрутизації).
+  const hardBlock = !!msg.refusal || (finish === 'content_filter' && !!text && text.trim() !== '');
+  throw new EmptyImageError(text, finish, !hardBlock);
 }

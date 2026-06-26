@@ -179,6 +179,18 @@ export async function renderMeet(
     }
   }
 
+  // ─ лічильник учасників у бейджі «Люди» (toolbar) ─
+  // Шаблон статично показує "12" = 11 дефолтних учасників + 1 «(Ви)»: Sandro
+  // дублюється у панелі «Люди» як локальний користувач, тож загальний headcount
+  // на одиницю більший за кількість керованих плиток. Список панелі — статичний
+  // HTML (рендер його не перебудовує), синхронізуємо лише число у бейджі, щоб
+  // воно змінювалось разом із кількістю учасників групи (додавання/видалення).
+  const headcount = rows.length + 1;
+  html = html.replace(
+    /(<div class="fs3avc">)\d+(<\/div>)/,
+    (_m, a, b) => a + headcount + b
+  );
+
   // ─ глобальні налаштування (код зустрічі, час 24h) ─
   const s = getSettings(false);
   const newCode = String((s.meeting_code ?? '') !== '' ? s.meeting_code : ORIGINAL_MEETING_CODE).trim();

@@ -15,6 +15,7 @@ import {
   restoreParticipant,
   reorder,
   participantImage,
+  cropParticipantImage,
   type ImageWhich,
 } from './services/participants';
 import {
@@ -131,6 +132,19 @@ route('GET', '/api/avatar/(?<pid>\\d+)', (r) => {
   const res = participantImage(intParam(r, 'pid'), which);
   if (!res) return MeetResponse.text('no avatar', 404);
   return new MeetResponse(200, res[0], res[1], { 'Cache-Control': 'no-store' });
+});
+// Кроп ВЛАСНОГО зображення учасника (коли немає генерації, з якої різати):
+// вирізає область `from`-зображення (start|end|source) → аватарка `which`.
+route('POST', '/api/participants/(?<pid>\\d+)/crop', (r) => {
+  const b = r.json();
+  const fromRaw = String(b.from ?? 'start');
+  const from: ImageWhich = fromRaw === 'end' || fromRaw === 'source' ? fromRaw : 'start';
+  const which = b.which === 'end' ? 'end' : 'start';
+  const rect = { x: Number(b.x), y: Number(b.y), width: Number(b.width), height: Number(b.height) };
+  if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) {
+    return { error: 'x/y/width/height мають бути числами', _status: 400 };
+  }
+  return cropParticipantImage(intParam(r, 'pid'), from, which, rect);
 });
 
 // ─── Рендер ───────────────────────────────────────────────────────────────────

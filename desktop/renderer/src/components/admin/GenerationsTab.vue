@@ -78,7 +78,7 @@
     <p v-show="!generations.length" class="muted">Генерацій немає. Зайди у групу і натисни <span class="msym sm">auto_awesome</span> «Генерувати» в учасника з оригінальним фото.</p>
   </section>
 
-  <CropModal :gen="cropGen" @close="cropGen = null" @applied="onCropped" />
+  <CropModal :subject="cropSubject" @close="cropGen = null" @applied="onCropped" />
   <RetouchModal :gen="retouchGen" @close="retouchGen = null" @saved="onRetouched" @restored="onRetouched" />
 </template>
 
@@ -90,7 +90,7 @@ import { useUiStore } from '@/stores/ui'
 import { AdminModalKey } from '@/components/admin/adminModal'
 import CropModal from '@/components/admin/CropModal.vue'
 import RetouchModal from '@/components/admin/RetouchModal.vue'
-import type { Generation, Group, Participant } from '@/types'
+import type { CropSubject, Generation, Group, Participant } from '@/types'
 
 const ui = useUiStore()
 const route = useRoute()
@@ -138,6 +138,19 @@ function metaStr(g: Generation): string {
     .filter(Boolean)
     .join(' · ')
 }
+
+// Кроп-«subject» для відкритої генерації: повнорозмірний колаж → /crop генерації.
+const cropSubject = computed<CropSubject | null>(() => {
+  const g = cropGen.value
+  if (!g) return null
+  return {
+    title: `Генерація #${g.id} — ${g.participant_name || '—'}`,
+    meta: [g.group_name ? `група: ${g.group_name}` : '', `${g.model} · ${g.provider} · ${g.service_tier}`, g.cost_usd != null ? `$${Number(g.cost_usd).toFixed(5)}` : ''].filter(Boolean),
+    imgSrc: `/api/generation-image/${g.id}?t=${g.id}`,
+    endpoint: `/api/generations/${g.id}/crop`,
+    applied: !!g.approved_at,
+  }
+})
 
 // ── filters ──
 async function loadGroups(): Promise<void> {

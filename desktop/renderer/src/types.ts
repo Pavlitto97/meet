@@ -55,6 +55,22 @@ export interface Generation {
   created_at?: string
 }
 
+/** Узагальнене джерело для CropModal: будь-яке зображення, яке можна вирізати
+ *  й застосувати аватаркою початку/кінця — генерація (повнорозмірний колаж) АБО
+ *  власне фото учасника (коли генерації немає). Дані-only: модалка сама шле POST. */
+export interface CropSubject {
+  title: string
+  meta?: string[]
+  // URL зображення, у coordinate-space якого користувач задає рамку (натуральні px).
+  imgSrc: string
+  // POST-ціль; тіло = { which, x, y, width, height, ...(from ? { from } : {}) }.
+  endpoint: string
+  // Для кропу фото учасника (яке саме джерело різати); для генерації — відсутнє.
+  from?: 'start' | 'end' | 'source'
+  // Показати бейдж «застосовано» в шапці.
+  applied?: boolean
+}
+
 export interface Screenshot {
   id: number
   which: 'start' | 'end'

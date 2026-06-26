@@ -107,6 +107,8 @@
 
     <input ref="fileInput" type="file" accept="image/*" hidden @change="onFile" />
   </section>
+
+  <CropModal :subject="cropSubject" @close="cropSubject = null" @applied="onCropApplied" />
 </template>
 
 <script setup lang="ts">
@@ -116,7 +118,8 @@ import { call } from '@/lib/api'
 import { fileToDataUrl } from '@/lib/util'
 import { useUiStore } from '@/stores/ui'
 import { AdminModalKey } from '@/components/admin/adminModal'
-import type { Group, Participant } from '@/types'
+import CropModal from '@/components/admin/CropModal.vue'
+import type { CropSubject, Generation, Group, Participant } from '@/types'
 
 const ui = useUiStore()
 const route = useRoute()
@@ -129,6 +132,7 @@ const deletedParticipants = ref<Participant[]>([])
 const bust = ref(Date.now())
 const pendingUpload = ref<{ id: number; kind: 'source' | 'start' | 'slide' } | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
+const cropSubject = ref<CropSubject | null>(null)
 
 const groupId = computed(() => parseInt(String(route.params.id), 10))
 const withSourceCount = computed(() => participants.value.filter((p) => p.has_source && !p.skipped).length)
@@ -310,11 +314,56 @@ async function addParticipant(): Promise<void> {
 
 const WHICH_LABEL: Record<string, string> = { source: 'оригінал', start: 'початок зустрічі', end: 'кінець зустрічі' }
 function openImage(p: Participant, which: 'source' | 'start' | 'end'): void {
-  modal.open({
-    title: `${p.custom_name || p.original_name} — ${WHICH_LABEL[which]}`,
-    imgSrc: thumbSrc(p.id, which),
-    actions: [{ label: 'Закрити', cls: 'secondary', onClick: () => modal.close() }],
-  })
+  const actions: Array<{ label: string; cls: string; onClick: () => void }> = [
+    { label: 'Закрити', cls: 'secondary', onClick: () => modal.close() },
+  ]
+  // Для аватарок початку/кінця даємо переобрізати їх (з генерації, якщо є).
+  if (which === 'start' || which === 'end') {
+    actions.unshift({ label: 'Кроп', cls: '', onClick: () => void openCropFor(p, which) })
+  }
+  modal.open({ title: `${p.custom_name || p.original_name} — ${WHICH_LABEL[which]}`, imgSrc: thumbSrc(p.id, which), actions })
+}
+
+/**
+ * Відкрити кроп для аватарки учасника. Гібрид: якщо для учасника є готова
+ * генерація — ріжемо ПОВНОРОЗМІРНИЙ колаж (макс. якість, наявний /crop генерації,
+ * перевага застосованій); інакше (аватарку завантажено вручну) — ріжемо саме цю
+ * зменшену аватарку через /api/participants/<id>/crop. У будь-якому разі CropModal
+ * дає призначити вирізане у Початок або Кінець.
+ */
+async function openCropFor(p: Participant, which: 'start' | 'end'): Promise<void> {
+  modal.close()
+  let gens: Generation[] = []
+  try {
+    gens = await call<Generation[]>('GET', `/api/generations?participant_id=${p.id}`)
+  } catch {
+    /* call() вже показав тост — впадемо у фолбек на аватарку */
+  }
+  const done = gens.filter((g) => g.status === 'done' && g.has_image)
+  const gen = done.find((g) => g.approved_at) ?? done[0] // застосована, інакше найновіша готова
+  const bust = Date.now()
+  const name = p.custom_name || p.original_name
+  cropSubject.value = gen
+    ? {
+        title: `${name} — кроп з генерації #${gen.id}`,
+        meta: ['повнорозмірний колаж — виділи область і признач у початок/кінець'],
+        imgSrc: `/api/generation-image/${gen.id}?t=${bust}`,
+        endpoint: `/api/generations/${gen.id}/crop`,
+        applied: !!gen.approved_at,
+      }
+    : {
+        title: `${name} — кроп аватарки (${WHICH_LABEL[which]})`,
+        meta: ['генерації немає — ріжемо поточну (зменшену) аватарку'],
+        imgSrc: `/api/avatar/${p.id}?which=${which}&t=${bust}`,
+        endpoint: `/api/participants/${p.id}/crop`,
+        from: which,
+      }
+}
+
+// Кроп застосовано: оновлюємо мініатюри (bust змінюється у load). Модалку НЕ
+// закриваємо — типовий сценарій: вирізати початок, посунути рамку, вирізати кінець.
+async function onCropApplied(): Promise<void> {
+  await load()
 }
 
 watch(groupId, (v) => {

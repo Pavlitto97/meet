@@ -1,12 +1,10 @@
 <template>
-  <div v-if="gen" class="modal-bg show" @mousedown.self="$emit('close')">
+  <div v-if="subject" class="modal-bg show" @mousedown.self="$emit('close')">
     <div class="modal crop-modal" role="dialog" aria-modal="true">
-      <h3><span class="msym">crop</span> Генерація #{{ gen.id }} — {{ gen.participant_name || '—' }}</h3>
+      <h3><span class="msym">crop</span> {{ subject.title }}</h3>
       <div class="gen-meta">
-        <span v-if="gen.group_name">група: {{ gen.group_name }}</span>
-        <span>{{ gen.model }} · {{ gen.provider }} · {{ gen.service_tier }}</span>
-        <span v-if="gen.cost_usd != null">${{ Number(gen.cost_usd).toFixed(5) }}</span>
-        <span v-if="gen.approved_at" class="badge applied">застосовано</span>
+        <span v-for="(m, i) in subject.meta || []" :key="i">{{ m }}</span>
+        <span v-if="subject.applied" class="badge applied">застосовано</span>
         <span class="crop-head-hint">тягни мишею по фото — рамка; за маркери — розмір; подвійний клік — все; стрілки — посунути</span>
       </div>
 
@@ -72,9 +70,9 @@
 import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { call } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
-import type { Generation } from '@/types'
+import type { CropSubject } from '@/types'
 
-const props = defineProps<{ gen: Generation | null }>()
+const props = defineProps<{ subject: CropSubject | null }>()
 const emit = defineEmits<{ (e: 'close'): void; (e: 'applied', which: 'start' | 'end'): void }>()
 
 const ui = useUiStore()
@@ -95,7 +93,7 @@ const applying = ref(false)
 const loadFailed = ref(false)
 const applied = ref({ start: false, end: false })
 
-const imgSrc = computed(() => (props.gen ? `/api/generation-image/${props.gen.id}?t=${props.gen.id}` : ''))
+const imgSrc = computed(() => props.subject?.imgSrc ?? '')
 const tall = computed(() => natural.value.w > 0 && natural.value.h / natural.value.w > 1.3)
 const ready = computed(() => natural.value.w > 0 && disp.value.w > 0 && !loadFailed.value)
 const k = computed(() => (natural.value.w ? disp.value.w / natural.value.w : 0))
@@ -257,10 +255,12 @@ function presetFull(): void {
 }
 
 async function apply(which: 'start' | 'end'): Promise<void> {
-  if (!props.gen || !sel.value) return
+  if (!props.subject || !sel.value) return
   applying.value = true
   try {
-    await call('POST', `/api/generations/${props.gen.id}/crop`, { which, ...naturalSel.value })
+    const body: Record<string, any> = { which, ...naturalSel.value }
+    if (props.subject.from) body.from = props.subject.from
+    await call('POST', props.subject.endpoint, body)
     applied.value[which] = true
     ui.toast(which === 'start' ? 'Вирізано → аватарка початку зустрічі' : 'Вирізано → аватарка кінця зустрічі', 'ok')
     emit('applied', which)
@@ -272,7 +272,7 @@ async function apply(which: 'start' | 'end'): Promise<void> {
 }
 
 function onKey(e: KeyboardEvent): void {
-  if (!props.gen) return
+  if (!props.subject) return
   if (e.key === 'Escape') {
     e.preventDefault()
     emit('close')
@@ -297,15 +297,15 @@ function onKey(e: KeyboardEvent): void {
 }
 
 watch(
-  () => props.gen,
-  async (g) => {
+  () => props.subject,
+  async (s) => {
     sel.value = null
     applied.value = { start: false, end: false }
     loadFailed.value = false
     natural.value = { w: 0, h: 0 }
     disp.value = { w: 0, h: 0 }
     endDrag()
-    if (g) {
+    if (s) {
       document.addEventListener('keydown', onKey, true)
       await nextTick()
       if (!ro) ro = new ResizeObserver(refit)
