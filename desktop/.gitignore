@@ -8,4 +8,6 @@ test-results/
 playwright-report/
 blob-report/
 .playwright/
-# NOTE: .env is intentionally committed (project decision — creds live in the private repo).
+# NOTE: .env is NOT committed. Pushing GH_TOKEN got the PAT auto-revoked by GitHub and broke
+# auto-update (v0.1.6). Creds stay local and are baked into the installer at build time.
+.env

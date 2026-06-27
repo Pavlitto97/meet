@@ -1,6 +1,6 @@
 {
   "name": "meet-editor-desktop",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Meet editor — Electron rewrite (Windows + macOS, auto-update, local data)",
   "author": "Pavel Hrinevych",
   "license": "UNLICENSED",
