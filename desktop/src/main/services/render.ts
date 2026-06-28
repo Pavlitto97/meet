@@ -23,6 +23,7 @@ import {
   SANDRO_COLOR,
   utf8ToLatin1,
   emojiCodepoints,
+  defaultParticipants,
 } from './config';
 import { parseCam, camIsServer, camHeadMarkup, degradeBlob } from './degrade';
 import { activeGroupId, groupSlide } from './groups';
@@ -148,154 +149,111 @@ export async function renderMeet(
     [groupId]
   );
 
-  // Видалені (м'яко) слоти шаблону: їхні плитка/рядок панелі «Люди»/кружечок
-  // лишаються в сирому HTML із рідним іменем+аватаркою, бо replace нижче бере
-  // лише активні rows. Щоб видалений учасник зник зі скріна — приховуємо всі
-  // його появи CSS-ом (нижче, через headInject). user_added (local/*) у шаблоні
-  // не існують, тож фільтруємо лише слоти з asset-файлами.
-  const deletedDevices = all(
-    'SELECT device_id FROM participants WHERE group_id = ? AND deleted != 0',
-    [groupId]
-  )
-    .map((r) => String(r.device_id))
-    .filter((d) => PARTICIPANT_ASSETS[d]);
-
-  // «Інші» — слоти плитки «Ще N осіб»: шаблонні слоти БЕЗ власної плитки сітки
-  // (жоден їхній файл не має ролі tile → 302/306/307). Визначаємо за ШАБЛОНОМ, а
-  // НЕ за БД-прапором skipped (у міграованих/правлених групах він = 0). otherRows —
-  // активні «інші» у порядку показу; circleSlots — фізичні кружечки-прев'ю (рівно 2).
-  const isOtherDevice = (device: string): boolean => {
+  // ─ розкладка учасників по слотах шаблону ЗА ПОЗИЦІЄЮ ─
+  // Шаблон має фіксований набір «слотів» (плитка+рядок панелі+кружечок+бейдж),
+  // кожен зі своїм device_id. Раніше учасник був жорстко прив'язаний до СВОГО
+  // device_id, тож сортування в редакторі (position) не рухало фото. Тепер
+  // ПАКУЄМО активних учасників у слоти за порядком position:
+  //  • Sandro (презентер) ЗАКРІПЛЕНИЙ у своєму слоті 316;
+  //  • решта заповнюють слоти [295..301] (7 плиток-фото), далі [302,306,307]
+  //    («Ще N осіб» — лише рядок+кружечок, без фото-плитки).
+  // Видалення → ущільнення без дірок; незаповнені (зайві) слоти ховаємо CSS-ом.
+  const slotOrder = Object.keys(PARTICIPANT_ASSETS); // [316, 295..301, 302,306,307]
+  const nonSandroSlots = slotOrder.filter((d) => d !== SANDRO_DEVICE);
+  const isOtherSlot = (device: string): boolean => {
     const a = PARTICIPANT_ASSETS[device];
-    return !!a && a.files.every((f) => fileRoles![f] !== 'tile');
+    return !!a && a.files.every((f) => fileRoles![f] !== 'tile'); // без власної плитки-фото
   };
-  const otherRows = rows.filter((r) => isOtherDevice(r.device_id));
-  const circleSlots = Object.keys(fileRoles!).filter((f) => fileRoles![f] === 'circle');
+  const slotDefaultName: Record<string, string> = {};
+  for (const d of defaultParticipants()) slotDefaultName[d.device_id] = d.original_name;
 
-  // ─ аватарки/літери: підміна src буквених файлів учасника ─
-  // Без фото — буквений кружечок: літера з АКТУАЛЬНОГО імені, колір — груповий
-  // розклад (стабільний для групи ⇒ однаковий на «початку» і «кінці»).
+  // Пари (слот ← учасник): Sandro → 316 (закріплено), решта (за position) → по черзі.
+  const sandroRow = rows.find((r) => r.device_id === SANDRO_DEVICE) ?? null;
+  const rest = rows.filter((r) => r.device_id !== SANDRO_DEVICE); // вже ORDER BY position
+  const assigned: Array<{ slot: string; row: any }> = [];
+  if (sandroRow) assigned.push({ slot: SANDRO_DEVICE, row: sandroRow });
+  for (let i = 0; i < rest.length && i < nonSandroSlots.length; i++) {
+    assigned.push({ slot: nonSandroSlots[i], row: rest[i] });
+  }
+  const usedSlots = new Set(assigned.map((a) => a.slot));
+  const othersAssigned = assigned.filter((a) => isOtherSlot(a.slot)).length;
+
   const letterColors = groupLetterColors(groupId);
-  const letterFor = (row: any): string => {
-    const nm =
-      row.custom_name && String(row.custom_name).trim() !== ''
-        ? String(row.custom_name)
-        : latin1SpaceToUtf8(String(row.original_name));
-    return letterAvatarDataUrl(nm, letterColors[row.device_id] ?? PARTICIPANT_ASSETS[row.device_id].color);
-  };
-  for (const row of rows) {
-    const assets = PARTICIPANT_ASSETS[row.device_id];
-    if (!assets) continue; // user_added (local/*) не мають плитки у шаблоні
+  // Ім'я для показу: custom_name або (фолбек) читабельний original_name.
+  const displayNameOf = (row: any): string =>
+    row.custom_name && String(row.custom_name).trim() !== ''
+      ? String(row.custom_name)
+      : latin1SpaceToUtf8(String(row.original_name));
 
-    let blob: Buffer | null;
-    let mime: string | null;
-    // 'end' лише якщо avatar_end існує І непорожній — інакше фолбек на start (як було).
+  // ── Pass 1: аватарки/літери у файли слота ──
+  // Фото — лише у tile-файли слота; решта файлів (панель/кружечок/бейдж) — буквений
+  // кружечок (колір — за СЛОТОМ, тож позиція має стабільний колір на «початку»/«кінці»).
+  for (const { slot, row } of assigned) {
+    const assets = PARTICIPANT_ASSETS[slot];
     const endBuf = which === 'end' ? toBuffer(row.avatar_end) : null;
-    if (endBuf && endBuf.length > 0) {
-      blob = endBuf;
-      mime = row.avatar_end_mime;
-    } else {
-      blob = toBuffer(row.avatar);
-      mime = row.avatar_mime;
-    }
-
-    // Фото (якщо є) — лише для плитки.
+    let blob: Buffer | null = endBuf && endBuf.length > 0 ? endBuf : toBuffer(row.avatar);
+    let mime: string | null = endBuf && endBuf.length > 0 ? row.avatar_end_mime : row.avatar_mime;
     let photoUrl: string | null = null;
     if (blob && blob.length > 0 && mime) {
       // Серверні методи (gd/gd-jpeg) бейкають деградацію прямо в байти аватарки.
-      if (camI > 0 && camIsServer(camMethod)) {
-        [blob, mime] = await degradeBlob(blob, mime, camMethod, camI);
-      }
+      if (camI > 0 && camIsServer(camMethod)) [blob, mime] = await degradeBlob(blob, mime, camMethod, camI);
       photoUrl = 'data:' + mime + ';base64,' + blob.toString('base64');
     }
-    // Буквений кружечок — для панелі «Люди»/бейджа ЗАВЖДИ (фото там не показуємо),
-    // а для плитки — як фолбек без фото. Кружечки «Ще N осіб» (qg7mD) — окремий
-    // прохід нижче: слот може перейти до іншого «іншого» при видаленні власника.
-    const letterUrl = letterFor(row);
+    const letterUrl = letterAvatarDataUrl(displayNameOf(row), letterColors[slot] ?? assets.color);
     for (const f of assets.files) {
-      if (fileRoles![f] === 'circle') continue;
       const url = photoUrl !== null && tileFiles!.has(f) ? photoUrl : letterUrl;
       html = html.replaceAll(`assets/img/people/${f}.svg`, url);
     }
   }
 
-  // ─ кружечки-прев'ю плитки «Ще N осіб» ─
-  // У шаблоні рівно 2 фізичні слоти (u20,u21). НЕ прив'язуємо слот до «власника»
-  // (302→u20, 306→u21) — інакше після видалення власника лишився б 1 кружечок при
-  // «Ще 2 особи». Показуємо ПЕРШИХ N активних «інших»; слот переходить до наступного.
-  for (let i = 0; i < circleSlots.length && i < otherRows.length; i++) {
-    html = html.replaceAll(`assets/img/people/${circleSlots[i]}.svg`, letterFor(otherRows[i]));
+  // ── Pass 2: імена — двофазно через плейсхолдери ──
+  // Шаблонне ім'я слота → унікальний токен, ПОТІМ токен → відображуване ім'я. Так
+  // вставлене ім'я (напр. «Денис») не перезамінюється наступним пошуком іншого
+  // шаблонного імені (глобальний replaceAll інакше зачепив би вже вставлений текст).
+  const swaps: Array<[string, string]> = [];
+  const named = assigned
+    .filter((a) => slotDefaultName[a.slot])
+    .map((a, i) => ({ tmpl: slotDefaultName[a.slot], tok: `\x00MEETNAME${i}\x00`, name: displayNameOf(a.row) }))
+    .sort((x, y) => y.tmpl.length - x.tmpl.length); // довші шаблонні імена — перші
+  for (const n of named) {
+    html = html.replaceAll(n.tmpl, () => n.tok);
+    swaps.push([n.tok, utf8ToLatin1(n.name)]);
   }
+  for (const [tok, name] of swaps) html = html.replaceAll(tok, () => name);
 
-  // ─ імена: глобальна заміна (плитка + шапка + панель «Люди») ─
-  // user_added (local/*) поза грою: їхній original_name — довільний текст
-  // користувача, глобальний replaceAll по ньому міг би зачепити текст шаблону.
-  const namePairs = rows.filter((r) => !r.user_added && r.custom_name !== null && r.custom_name !== '');
-  // Довші оригінали — перші (щоб короткі підрядки не псували довші).
-  namePairs.sort((a, b) => b.original_name.length - a.original_name.length);
-  for (const r of namePairs) {
-    const repl = utf8ToLatin1(String(r.custom_name));
-    if (repl !== r.original_name) {
-      // () => repl: замінник — літерал ($-патерни в імені не інтерпретуються).
-      html = html.replaceAll(r.original_name, () => repl);
-    }
-  }
+  // ─ лічильник учасників (бейдж «Люди» fs3avc + заголовок «Співавтори» MKVSQd) ─
+  // = к-сть зайнятих слотів + 1: Sandro дублюється у панелі як презентер (рядок 320).
+  const headcount = assigned.length + 1;
+  html = html.replace(/(<div class="fs3avc">)\d+(<\/div>)/, (_m, a, b) => a + headcount + b);
+  html = html.replace(/(<div class="MKVSQd">)\d+(<\/div>)/, (_m, a, b) => a + headcount + b);
 
-  // ─ лічильник учасників у бейджі «Люди» (toolbar) ─
-  // Шаблон статично показує "12" = 11 дефолтних учасників + 1 «(Ви)»: Sandro
-  // дублюється у панелі «Люди» як локальний користувач, тож загальний headcount
-  // на одиницю більший за кількість керованих плиток. Список панелі — статичний
-  // HTML (рендер його не перебудовує), синхронізуємо лише число у бейджі, щоб
-  // воно змінювалось разом із кількістю учасників групи (додавання/видалення).
-  const headcount = rows.length + 1;
-  html = html.replace(
-    /(<div class="fs3avc">)\d+(<\/div>)/,
-    (_m, a, b) => a + headcount + b
-  );
-  // Те саме число — у заголовку «Співавтори N» панелі «Люди» (MKVSQd): панель
-  // показує Sandro двічі (як «Ви» і як презентера), тож rows.length + 1 = к-сть
-  // рядків панелі. Синхронізуємо, щоб лічильник падав разом із видаленням.
-  html = html.replace(
-    /(<div class="MKVSQd">)\d+(<\/div>)/,
-    (_m, a, b) => a + headcount + b
-  );
-
-  // ─ приховування видалених учасників + лейбл «Ще N осіб» ─
-  // Видалену появу ХОВАЄМО CSS-ом (нижче, у headInject), а не вирізаємо з HTML:
-  //  • плитка сітки і рядок панелі «Люди» мають data-participant-id;
-  //  • бейдж People (Qw4c9e) — поза плиткою/рядком, тож ловимо за УНІКАЛЬНИМ src
-  //    буквеного файла (для видалених src лишається недоторканим — replace вище
-  //    проходить лише по активних rows).
-  // (Кружечки «Ще N осіб» не ховаємо тут — їх переназначено активним «іншим» вище.)
+  // ─ приховування ЗАЙВИХ (незаповнених) слотів ─
+  // Незаповнений слот лишився б рідною плиткою/рядком/кружечком шаблону — ховаємо
+  // CSS-ом (headInject): плитку сітки і рядок панелі «Люди» за data-participant-id,
+  // кружечок «Ще N осіб» (qg7mD) та бейдж People (Qw4c9e) — за унікальним src
+  // буквеного файла (у незайнятого слота src лишається недоторканим у Pass 1).
   // :has() підтримується Chromium скріна (вже юзається у raster-стилях нижче).
   const hideSelectors: string[] = [];
-  for (const device of deletedDevices) {
-    const idSel = `[data-participant-id="${device}"]`;
-    hideSelectors.push(`.dkjMxf:has(> ${idSel})`); // плитка сітки (позиційна обгортка)
+  for (const slot of slotOrder) {
+    if (usedSlots.has(slot)) continue;
+    const idSel = `[data-participant-id="${slot}"]`;
+    hideSelectors.push(`.dkjMxf:has(> ${idSel})`); // плитка сітки (no-op для «інших»)
     hideSelectors.push(`[role="listitem"]${idSel}`); // рядок панелі «Люди»
-    // Бейдж People (Qw4c9e) — поза плиткою/рядком, ловимо за унікальним src.
-    // Кружечки «Ще N осіб» тут НЕ чіпаємо: вони переназначаються активним «іншим»
-    // (вище), а зайві слоти ховаються нижче за лічильником.
-    for (const f of PARTICIPANT_ASSETS[device].files) {
-      if (fileRoles![f] === 'badge') {
-        hideSelectors.push(`.G9bi9d:has(> img[src="assets/img/people/${f}.svg"])`);
-      }
+    for (const f of PARTICIPANT_ASSETS[slot].files) {
+      if (fileRoles![f] === 'circle') hideSelectors.push(`.gdIo3e:has(> img[src="assets/img/people/${f}.svg"])`);
+      else if (fileRoles![f] === 'badge') hideSelectors.push(`.G9bi9d:has(> img[src="assets/img/people/${f}.svg"])`);
     }
   }
 
-  // «Ще N осіб»: N = к-сть активних «інших» (otherRows). 0 → ховаємо всю плитку;
-  // інакше правимо число+форму й ховаємо ЗАЙВІ кружечки-слоти (понад N — їх НЕ
-  // переназначено вище, тож вони лишились із недоторканим template-src).
-  const remainingOthers = otherRows.length;
-  if (remainingOthers <= 0) {
+  // «Ще N осіб»: N = к-сть учасників у «інших»-слотах. 0 → ховаємо всю плитку;
+  // інакше правимо число+форму (кружечки вже заповнені/приховані вище за слотами).
+  if (othersAssigned <= 0) {
     hideSelectors.push('.dkjMxf:has(img.qg7mD)'); // плитка «Ще N осіб» — цілком
-  } else {
-    for (let i = remainingOthers; i < circleSlots.length; i++) {
-      hideSelectors.push(`.gdIo3e:has(> img[src="assets/img/people/${circleSlots[i]}.svg"])`);
-    }
-    if (remainingOthers !== ORIGINAL_OTHERS_COUNT) {
-      const repl = `Ще ${remainingOthers} ${pluralOsoba(remainingOthers)}`;
-      html = html.replaceAll(utf8ToLatin1(ORIGINAL_OTHERS_LABEL), () => utf8ToLatin1(repl));
-    }
+  } else if (othersAssigned !== ORIGINAL_OTHERS_COUNT) {
+    html = html.replaceAll(
+      utf8ToLatin1(ORIGINAL_OTHERS_LABEL),
+      () => utf8ToLatin1(`Ще ${othersAssigned} ${pluralOsoba(othersAssigned)}`)
+    );
   }
 
   // ─ глобальні налаштування (код зустрічі, час 24h) ─
