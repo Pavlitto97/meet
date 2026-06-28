@@ -339,6 +339,14 @@ export async function renderMeet(
     'img.KjWwNd[src^="data:image/"]:not([src^="data:image/svg"]),' +
     'img.Qw4c9e[src^="data:image/"]:not([src^="data:image/svg"])' +
     '{aspect-ratio:1/1!important;object-fit:cover!important;}' +
+    // Бейдж мікрофона на плитці фарбується у колір ТЕМИ плитки (кружечок-фон
+    // .JHK7jb = --tile-on-primary, напр. rgb(0,55,50); іконка = --tile-primary),
+    // бо «сіре» правило шаблону скоупнуте під тулбар (.GvcuGe), а плитки під нього
+    // не підпадають. Форсимо нейтральний сірий, як у скріні-еталоні: темно-сірий
+    // кружечок + світло-сіра іконка. .Hdh4hc{fill:currentcolor} ⇒ для іконки досить
+    // color на контейнері mic-стану (.uB7U9e/.aC0Bke).
+    '.dkjMxf .JHK7jb{background-color:rgb(60,64,67)!important;}' +
+    '.dkjMxf .uB7U9e,.dkjMxf .aC0Bke{color:rgb(232,234,237)!important;}' +
     '</style>';
 
   // Приховати всі появи видалених учасників (плитка/рядок/кружечок/бейдж).
