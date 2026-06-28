@@ -3,10 +3,8 @@
     <div class="toolbar">
       <!-- Лише пропорція еталонного скріншота (2555×1267 ≈ сцена шаблону 2560×1271):
            16:9 (1920×1080) розтягував картинку по вертикалі на ~13%. -->
-      <select v-model="shotSize" class="btn-sm" style="border-radius:16px;padding:8px 12px" title="Всі розміри — у рідній пропорції шаблону (без розтягування)">
-        <option value="2555x1267">2555×1267 — еталон (1:1)</option>
-        <option value="1920x952">1920×952 — менший, та сама пропорція</option>
-        <option value="1280x635">1280×635 — компактний</option>
+      <select v-model="shotSize" class="btn-sm" style="border-radius:16px;padding:8px 12px" title="Всі розміри — у рідній пропорції шаблону (без розтягування). Вибір запам'ятовується.">
+        <option v-for="o in SHOT_SIZES" :key="o.value" :value="o.value">{{ o.label }}</option>
       </select>
       <button :disabled="capturing" @click="capture('start')"><span class="msym">photo_camera</span>Скріншот початку зустрічі</button>
       <button :disabled="capturing" @click="capture('end')"><span class="msym">photo_camera</span>Скріншот кінця зустрічі</button>
@@ -58,7 +56,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, inject, onMounted } from 'vue'
+import { ref, computed, inject, onMounted, watch } from 'vue'
 import { call } from '@/lib/api'
 import { fmtBytes } from '@/lib/util'
 import { useUiStore } from '@/stores/ui'
@@ -70,8 +68,36 @@ const modal = inject(AdminModalKey)!
 
 const screenshots = ref<Screenshot[]>([])
 const activeGroup = ref<Group | null>(null)
-// Дефолт — еталонна пропорція шаблону 1:1 (2555×1267, без масштабування/розтягування).
-const shotSize = ref('2555x1267')
+
+// Пресети розміру скріна — усі в рідній пропорції шаблону (2555×1267 ≈ сцена
+// 2560×1271), без розтягування. Дефолт — еталон 1:1.
+const SHOT_SIZES = [
+  { value: '2555x1267', label: '2555×1267 — еталон (1:1)' },
+  { value: '1920x952', label: '1920×952 — менший, та сама пропорція' },
+  { value: '1280x635', label: '1280×635 — компактний' },
+]
+const DEFAULT_SHOT_SIZE = '2555x1267'
+const SHOT_SIZE_KEY = 'meet.shotSize'
+// Запам'ятовуємо вибір користувача (localStorage): переживає перемикання вкладок
+// (компонент перемонтовується) і перезапуск застосунку. Невідоме/стале значення → дефолт.
+function loadShotSize(): string {
+  try {
+    const v = localStorage.getItem(SHOT_SIZE_KEY)
+    if (v && SHOT_SIZES.some((o) => o.value === v)) return v
+  } catch {
+    /* localStorage недоступний — тихо беремо дефолт */
+  }
+  return DEFAULT_SHOT_SIZE
+}
+const shotSize = ref(loadShotSize())
+watch(shotSize, (v) => {
+  try {
+    localStorage.setItem(SHOT_SIZE_KEY, v)
+  } catch {
+    /* ignore */
+  }
+})
+
 const capturing = ref(false)
 const bust = ref(Date.now())
 

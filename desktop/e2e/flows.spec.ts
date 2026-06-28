@@ -319,6 +319,25 @@ test('скріни: капчер початку зустрічі зʼявляє�
   await expect(win.locator('.shot-card .original')).toContainText('Тестова група');
 });
 
+test('скріни: пресет розміру памʼятається між перемиканнями вкладок', async () => {
+  const win = launched.win;
+  await win.locator('.tabs .tab', { hasText: 'Скріни' }).click();
+  const sizeSelect = win.locator('.panel.active .toolbar select');
+  await expect(sizeSelect).toBeVisible();
+
+  // Міняємо на не-дефолтний пресет.
+  await sizeSelect.selectOption('1280x635');
+  await expect(sizeSelect).toHaveValue('1280x635');
+
+  // Ідемо на іншу вкладку і назад — пресет НЕ має скидатись на дефолт.
+  await win.locator('.tabs .tab', { hasText: 'Групи' }).click();
+  await win.locator('.tabs .tab', { hasText: 'Скріни' }).click();
+  await expect(win.locator('.panel.active .toolbar select')).toHaveValue('1280x635');
+
+  // Повертаємо дефолт, щоб не впливати на наступні тести.
+  await win.locator('.panel.active .toolbar select').selectOption('2555x1267');
+});
+
 test('генерації: фільтр за групою працює (порожньо без генерацій)', async () => {
   const win = launched.win;
   await win.locator('.tabs .tab', { hasText: 'Генерації' }).click();
