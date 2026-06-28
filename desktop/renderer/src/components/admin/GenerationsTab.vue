@@ -21,7 +21,7 @@
       <button v-show="generations.length" class="danger btn-sm" @click="bulkDel('all', 'ВСЮ історію генерацій')"><span class="msym sm">delete</span>Очистити історію</button>
     </div>
 
-    <div class="stat-grid compact" style="margin-bottom:16px">
+    <div v-if="generations.length" class="stat-grid compact" style="margin-bottom:16px">
       <div v-for="(s, i) in stats" :key="i" class="stat-card" :class="s.cls">
         <span class="label">{{ s.label }}</span><span class="value">{{ s.value }}</span>
       </div>
@@ -75,7 +75,14 @@
       </div>
     </div>
 
-    <p v-show="!generations.length" class="muted">Генерацій немає. Зайди у групу і натисни <span class="msym sm">auto_awesome</span> «Генерувати» в учасника з оригінальним фото.</p>
+    <div v-if="!generations.length" class="empty-state">
+      <span class="msym es-ico">{{ filtersActive ? 'filter_alt_off' : 'auto_awesome' }}</span>
+      <div class="es-title">{{ filtersActive ? 'За цим фільтром нічого немає' : 'Генерацій ще немає' }}</div>
+      <div class="es-sub">
+        <template v-if="filtersActive">Спробуй інший фільтр або скинь їх, щоб побачити всі генерації.</template>
+        <template v-else>Зайди у групу і натисни <span class="msym sm">auto_awesome</span> <b>«Генерувати»</b> в учасника з оригінальним фото.</template>
+      </div>
+    </div>
   </section>
 
   <CropModal :subject="cropSubject" @close="cropGen = null" @applied="onCropped" />
@@ -108,6 +115,9 @@ const filterParticipant = ref('')
 const genBust = ref(Date.now())
 
 const hasError = computed(() => generations.value.some((g) => g.status === 'error'))
+// Чи активний хоч один фільтр — щоб порожній стан відрізняв «ще нема генерацій»
+// від «за цим фільтром нічого не знайшлось».
+const filtersActive = computed(() => !!(filterGroup.value || filterParticipant.value || filterStatus.value))
 
 const stats = computed(() => {
   const list = generations.value

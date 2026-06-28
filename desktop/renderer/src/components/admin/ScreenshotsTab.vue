@@ -22,10 +22,18 @@
       Змінити активну групу можна на вкладці «Групи».
     </p>
 
-    <div class="stat-grid compact" style="margin-bottom:16px">
+    <div v-if="screenshots.length" class="stat-grid compact" style="margin-bottom:16px">
       <div class="stat-card accent"><span class="label">Усього</span><span class="value">{{ screenshots.length }}</span></div>
       <div class="stat-card ok"><span class="label">Початок</span><span class="value">{{ startCount }}</span></div>
       <div class="stat-card"><span class="label">Кінець</span><span class="value">{{ endCount }}</span></div>
+    </div>
+
+    <div v-if="!screenshots.length" class="empty-state">
+      <span class="msym es-ico">photo_camera</span>
+      <div class="es-title">Скрінів ще немає</div>
+      <div class="es-sub">
+        Натисни <b>«Скріншот початку зустрічі»</b>, щоб зняти перший кадр активної групи<template v-if="activeGroup"> «{{ activeGroup.name }}»</template>.
+      </div>
     </div>
 
     <div class="shot-gallery">

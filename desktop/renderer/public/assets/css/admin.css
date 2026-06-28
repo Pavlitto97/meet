@@ -356,6 +356,21 @@ button.thumb.as-btn:hover { border-color: var(--accent); color: var(--accent); b
 }
 @keyframes loaderSlide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
 
+/* ─── Порожній стан (Material empty state) ─────────────────────────────────────── */
+/* Замість сирого рядка тексту: центрований заклик до дії у порожній вкладці. */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 4px; padding: 56px 24px; margin: 4px 0;
+}
+.empty-state .es-ico {
+  font-size: 44px; color: var(--surface-4); margin-bottom: 8px;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 40;
+}
+.empty-state .es-title { font-size: 15px; font-weight: 500; color: var(--on-surface-variant); }
+.empty-state .es-sub { font-size: 13px; color: var(--muted); max-width: 460px; line-height: 1.55; }
+.empty-state .es-sub .msym { color: var(--accent); vertical-align: -3px; }
+.empty-state .es-sub b { color: var(--on-surface-variant); font-weight: 500; }
+
 /* ─── Поля вводу (Material text fields) ───────────────────────────────────────── */
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field label { font-size: 12px; color: var(--muted); font-weight: 500; }
