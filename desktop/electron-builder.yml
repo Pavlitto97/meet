@@ -2,6 +2,11 @@ appId: com.futurra.meeteditor
 productName: Meet Editor
 copyright: © Futurra Group
 
+# Strip everything except the ship-allowlist (GH_TOKEN) from the packaged resources/.env,
+# so the OpenRouter key (or any other local secret) can never end up in a distributable.
+# Runs after packaging, before signing. See scripts/sanitize-ship-env.cjs.
+afterPack: scripts/sanitize-ship-env.cjs
+
 directories:
   output: dist
   buildResources: build
@@ -18,7 +23,9 @@ files:
 extraResources:
   - from: resources
     to: app-resources
-  # Credentials shipped with the app (project decision). Read by dotenv at startup.
+  # .env is baked for dotenv at startup, but the afterPack hook above rewrites the
+  # SHIPPED copy to an allowlist — only GH_TOKEN/GITHUB_TOKEN travel with the app.
+  # The OpenRouter key is never shipped; users enter their own in Settings.
   - from: .env
     to: .env
 

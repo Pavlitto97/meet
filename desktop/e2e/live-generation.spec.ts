@@ -13,7 +13,9 @@ async function livePhoto(): Promise<{ name: string; mimeType: string; buffer: Bu
 }
 
 // ЖИВИЙ конвеєр: реальна AI-генерація через OpenRouter (ВИТРАЧАЄ ГРОШІ).
-// Запуск ТІЛЬКИ явно: E2E_LIVE=1 npm run test:e2e -- live-generation
+// Ключ більше НЕ лежить у desktop/.env — передай його через оточення:
+//   E2E_LIVE=1 OPENROUTER_API_KEY=sk-or-... npm run test:e2e -- live-generation
+// (dotenv не перетирає вже задану змінну, тож db.ts засідить її в ізольовану тест-БД.)
 // На CI не виконується (E2E_LIVE не виставлено).
 test.describe.configure({ mode: 'serial' });
 test.skip(!process.env.E2E_LIVE, 'live-генерація вмикається лише E2E_LIVE=1 (коштує грошей)');

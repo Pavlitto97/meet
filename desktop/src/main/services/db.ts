@@ -321,13 +321,18 @@ export function initDb(): void {
     /* промт не критичний для старту */
   }
 
-  // OPENROUTER_API_KEY з оточення (.env через dotenv пріоритетніший за DB).
+  // OPENROUTER_API_KEY з оточення (.env) — це лише ДЕФОЛТ, що вшивається у білд.
+  // Сидимо ним БД ЛИШЕ якщо ключ ще не заданий: так заміна токена користувачем у
+  // Налаштуваннях переживає перезапуск (env більше НЕ перетирає DB щоразу).
   const envKey = (process.env.OPENROUTER_API_KEY ?? '').trim();
   if (envKey !== '') {
-    run(
-      "INSERT INTO settings(key, value) VALUES('openrouter_api_key', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-      [envKey]
-    );
+    const cur = String(one("SELECT value FROM settings WHERE key = 'openrouter_api_key'")?.value ?? '').trim();
+    if (cur === '') {
+      run(
+        "INSERT INTO settings(key, value) VALUES('openrouter_api_key', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [envKey]
+      );
+    }
   }
 }
 

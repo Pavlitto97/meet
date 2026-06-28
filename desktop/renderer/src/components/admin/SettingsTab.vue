@@ -24,7 +24,7 @@
         <div class="field"><label>Статус</label><span class="value" :class="apiKeyLocked ? 'status ok' : 'status err'">{{ apiKeyLocked ? 'ключ збережено' : 'ключ не задано' }}</span></div>
         <div class="field"><label>Баланс</label><div class="flex"><span class="value mono">{{ balance }}</span><button type="button" class="iconbtn" title="оновити баланс" @click="refreshBalance"><span class="msym">refresh</span></button></div></div>
       </div>
-      <p class="muted" style="margin:8px 0 0">Токен зберігається лише в локальній базі додатку і нікуди, крім openrouter.ai, не передається. Без нього AI-генерація не працює.</p>
+      <p class="muted" style="margin:8px 0 0">Застосунок постачається <b>без ключа</b> — встав свій OpenRouter API key (sk-or-…). Він зберігається лише в локальній базі цього компʼютера, нікуди (крім openrouter.ai) не передається й <b>не вшивається у білд</b>. Без нього AI-генерація не працює.</p>
     </div>
 
     <div class="card">

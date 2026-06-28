@@ -196,14 +196,19 @@ function init_db(): void
         q($con, 'INSERT OR IGNORE INTO settings(key, value) VALUES(?,?)', [$k, $v]);
     }
 
-    // Підтягуємо OPENROUTER_API_KEY з process env / .env (.env пріоритетніший за DB).
+    // OPENROUTER_API_KEY з process env / .env — це лише ДЕФОЛТ. Сидимо ним БД ЛИШЕ
+    // якщо ключ ще не заданий: так заміна токена в налаштуваннях переживає перезапуск
+    // (env більше НЕ перетирає DB щоразу).
     $envKey = load_env_key('OPENROUTER_API_KEY');
     if ($envKey !== '') {
-        q(
-            $con,
-            "INSERT INTO settings(key, value) VALUES('openrouter_api_key', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            [$envKey]
-        );
+        $row = one($con, "SELECT value FROM settings WHERE key = 'openrouter_api_key'");
+        if (trim((string)($row['value'] ?? '')) === '') {
+            q(
+                $con,
+                "INSERT INTO settings(key, value) VALUES('openrouter_api_key', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [$envKey]
+            );
+        }
     }
 
     // Лагідна міграція старих ключів time/period → start_time/start_period.

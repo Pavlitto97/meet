@@ -74,9 +74,13 @@
   npx electron-builder --win --mac --publish always` → `gh release edit vX.Y.Z
   --draft=false --latest`. Далі Windows-клієнти оновлюються самі (10 c / 6 год / банер).
   **Повний runbook (два токени, передумови, «перший раз вручну», чеклист) — `docs/RELEASE.md`.**
-- **Креди застосунку** (`OPENROUTER_API_KEY`, `GH_TOKEN` для апдейту) — із закоміченого
-  `desktop/.env` (`!desktop/.env` у `.gitignore`), бейкаються в інсталятор. Токен
-  ПУБЛІКАЦІЇ — окремий (`gh auth token`, scope `repo`), лише в shell, у застосунок не йде.
+- **Креди застосунку** (`OPENROUTER_API_KEY`, `GH_TOKEN` для апдейту) — із **локального
+  `desktop/.env`** (⚠️ **untracked**, ігнорується `.gitignore`; НЕ комітити — див.
+  «Поточні рішення»). Бейкаються в інсталятор при білді (electron-builder кладе у
+  `dist/win-unpacked/resources/.env`). Токен ПУБЛІКАЦІЇ — окремий (`gh auth token`,
+  scope `repo`), лише в shell, у застосунок не йде. **Перед релізом перевір, що
+  `GH_TOKEN` живий** (інакше клієнти дістануть 401):
+  `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(sed -n 's/^GH_TOKEN=//p' .env)" https://api.github.com/repos/Pavlitto97/meet/releases/latest` → має бути `200`.
 - ⚠️ **win-арх = x64 явно** (`electron-builder.yml`): default-арх = арх ХОСТА, тож на
   Apple Silicon `--win` без цього зібрав би arm64 (і `latest.yml` вказав би на arm64).
 - electron-builder створює реліз як **draft** → крок `--draft=false` обовʼязковий, інакше
@@ -108,8 +112,23 @@
 - **Деінсталяція ЛИШАЄ дані** (рішення користувача): NSIS `deleteAppDataOnUninstall:
   false` — БД/аватарки/скріни/кеш-ключ у `%APPDATA%\Meet Editor` переживають видалення.
   macOS — `scripts/uninstall-macos.sh` (`--purge` для повного стирання).
-- `.env` свідомо комітиться (рішення проєкту — креди в приватному репо). Для
-  авто-апдейту приватного репо в нього додають `GH_TOKEN` (PAT, Contents: Read).
+- ⚠️ **`.env` НЕ комітиться — і це критично для авто-апдейту.** Раніше `desktop/.env`
+  свідомо трекався; виявилось самовбивчим: коли `.env` із `GH_TOKEN` пушиться в репо,
+  GitHub **авто-відкликає** PAT (виявлений у пуші секрет), і встановлені застосунки
+  дістають `401 Bad credentials` на `releases/latest` → авто-апдейт мертвий. Так
+  померли токени у **v0.1.5/v0.1.6**; фікс — **v0.1.7** (`git rm --cached desktop/.env`,
+  прибрано `!desktop/.env` з `.gitignore`). Тепер креди живуть **лише локально** й
+  бейкаються в `.exe` при білді (бінарник GitHub на секрети не сканує → токен виживає).
+  **Залізні правила:**
+  1. **Ніколи не комітити `desktop/.env`** (він в `.gitignore`; випадковий `git add .`
+     його не підхопить — не форсити через `git add -f`).
+  2. `GH_TOKEN` — fine-grained PAT, єдиний репо `Pavlitto97/meet`, Contents: **Read**,
+     бажано **без терміну** (бо більше не пушиться — хай живе довго).
+  3. **«Перший раз вручну»:** старі білди з мертвим токеном самі не оновляться — раз
+     постав свіжий інсталятор; далі ланцюжок (0.1.7 → …) працює автоматично.
+  4. `OPENROUTER_API_KEY` був засвічений у git-історії (GitHub його не відкликає) —
+     варто **перегенерувати** в OpenRouter і вписати в локальний `.env`.
+  5. ⚠️ `docs/RELEASE.md` ще містить крок «commit .env» — **застаріло**, оновити.
 
 ## Доменна модель (групи учасників + source-зображення)
 
