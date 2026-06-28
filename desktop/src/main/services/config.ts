@@ -119,9 +119,11 @@ export const LETTER_COLORS = [
 export const SANDRO_DEVICE = `${TEMPLATE_SPACE}/devices/316`;
 export const SANDRO_COLOR = '#8d6e63';
 
-// 8 редагованих плиток (Sandro 316 + сім іменних 295–301) і три учасники
-// плитки «Ще 3 особи» (302/306/307 — є лише у панелі «Люди», skipped).
-// Девайс 320 (презентація Sandro) НЕ сідиться — це той самий Sandro.
+// 11 дефолтних учасників: Sandro (316, презентер) + 295–301 (плитки-фото) +
+// 302/306/307 («інші» — у рендері йдуть у плитку «Ще N осіб»). ЖОДЕН не skipped:
+// «пропуск» — суто користувацький прапор «не показувати в рендері/скріні» (skipped
+// слоти render.ts ВИКЛЮЧАЄ). Девайс 320 (презентація Sandro) НЕ сідиться — це той
+// самий Sandro. («Інші» визначаються за слотом без файла ролі tile, не за skipped.)
 export function defaultParticipants(): DefaultParticipant[] {
   const p = (n: number, name: string, skipped = false): DefaultParticipant => ({
     device_id: `${TEMPLATE_SPACE}/devices/${n}`,
@@ -138,9 +140,9 @@ export function defaultParticipants(): DefaultParticipant[] {
     p(299, 'Андрій'),
     p(300, 'Федір'),
     p(301, 'Юрій'),
-    p(302, 'Кирило', true),
-    p(306, 'Денис', true),
-    p(307, 'Максим', true),
+    p(302, 'Кирило'),
+    p(306, 'Денис'),
+    p(307, 'Максим'),
   ];
 }
 

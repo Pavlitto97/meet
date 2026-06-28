@@ -66,6 +66,34 @@ test('понад 10 учасників: 11-й зʼявляється у спис
   }, probe.activeId);
 });
 
+test('пропуск: skipped-учасник зникає з рендеру (і повертається при знятті)', async () => {
+  const win = launched.win;
+  const r = await win.evaluate(async () => {
+    const groups = await (await fetch('/api/groups')).json();
+    const active = groups.find((g: any) => g.active).id;
+    const ps = await (await fetch('/api/participants?group=' + active)).json();
+    const victim = ps.find((p: any) => !/devices\/316$/.test(p.device_id) && !p.skipped);
+    const orig = victim.custom_name;
+    const put = (body: any) =>
+      fetch('/api/participants/' + victim.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    await put({ custom_name: 'СКІПТЕСТ' });
+    const before = await (await fetch('/api/render?which=start')).text();
+    await put({ skipped: 1 }); // ← «пропуск»
+    const afterSkip = await (await fetch('/api/render?which=start')).text();
+    await put({ skipped: 0 }); // знімаємо пропуск
+    const afterUnskip = await (await fetch('/api/render?which=start')).text();
+    await put({ custom_name: orig ?? '' }); // прибираємо за собою
+    return {
+      presentBefore: before.includes('СКІПТЕСТ'),
+      presentAfterSkip: afterSkip.includes('СКІПТЕСТ'),
+      presentAfterUnskip: afterUnskip.includes('СКІПТЕСТ'),
+    };
+  });
+  expect(r.presentBefore).toBe(true); // до пропуску — у рендері
+  expect(r.presentAfterSkip).toBe(false); // ← «пропуск» прибирає зі скріна
+  expect(r.presentAfterUnskip).toBe(true); // зняли пропуск — знову у рендері
+});
+
 test('скріни: превʼю відкривається на весь екран і закривається через Esc', async () => {
   const win = launched.win;
   // Знімаємо скрін активної групи через API (швидко) і оновлюємо вкладку.

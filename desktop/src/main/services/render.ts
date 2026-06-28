@@ -180,7 +180,7 @@ export async function renderMeet(
 
   const rows = all(
     'SELECT device_id, original_name, custom_name, user_added, avatar, avatar_mime, avatar_end, avatar_end_mime ' +
-      'FROM participants WHERE group_id = ? AND deleted = 0 ORDER BY position',
+      'FROM participants WHERE group_id = ? AND deleted = 0 AND skipped = 0 ORDER BY position',
     [groupId]
   );
 

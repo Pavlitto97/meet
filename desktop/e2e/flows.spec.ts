@@ -31,11 +31,11 @@ test('групи: створення нової групи відкриває ї
   await win.locator('.modal-input').fill('Тестова група');
   await win.getByRole('button', { name: 'Створити', exact: true }).click();
 
-  // Перехід у деталі групи: 11 дефолтних слотів (8 редагованих + 3 пропущених
-  // з плитки «Ще 3 особи» шаблону mqy-kiph-fci).
+  // Перехід у деталі групи: 11 дефолтних слотів, ЖОДЕН не пропущений (пропуск —
+  // суто користувацький прапор; за замовчуванням усі йдуть у рендер).
   await expect(win.locator('.group-title')).toContainText('Тестова група');
   await expect(win.locator('table.data tbody tr')).toHaveCount(11);
-  await expect(win.locator('table.data tbody tr.skipped')).toHaveCount(3);
+  await expect(win.locator('table.data tbody tr.skipped')).toHaveCount(0);
 
   // Нова група ще не активна — кнопка активації видима.
   await expect(win.getByRole('button', { name: 'Активувати' })).toBeVisible();
