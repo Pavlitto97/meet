@@ -31,6 +31,20 @@ export async function launchApp(): Promise<LaunchedApp> {
   return { app, win, userData };
 }
 
+/**
+ * Відкриває СПИСОК усіх груп. Вкладка «Групи» тепер авто-перекидає на активну
+ * групу; повний список доступний лише через ?list=1 (як кнопка «← Групи»).
+ */
+export async function gotoGroupList(win: Page): Promise<void> {
+  // Вкладка «Групи» авто-перекидає на детальну активної групи; звідти кнопка
+  // «← Групи» (secondary, не вкладка) веде на повний список (?list=1).
+  await win.locator('.tabs .tab', { hasText: 'Групи' }).click();
+  const back = win.locator('button.secondary', { hasText: 'Групи' }).first();
+  await back.waitFor();
+  await back.click();
+  await win.getByRole('button', { name: 'Створити групу' }).waitFor();
+}
+
 export async function closeApp(launched: LaunchedApp | undefined): Promise<void> {
   if (!launched) return;
   await launched.app.close();

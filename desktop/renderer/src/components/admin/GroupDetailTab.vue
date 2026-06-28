@@ -1,7 +1,7 @@
 <template>
   <section class="panel active">
     <div class="toolbar">
-      <button class="secondary" @click="router.push('/admin/groups')"><span class="msym">arrow_back</span>Групи</button>
+      <button class="secondary" @click="router.push('/admin/groups?list=1')"><span class="msym">arrow_back</span>Групи</button>
       <h2 class="group-title"><span class="msym">group</span> {{ group?.name || '…' }}</h2>
       <span v-if="group?.active" class="badge done">активна</span>
       <button v-else-if="group" class="btn-sm" title="ця група піде у рендер і скріни" @click="activate"><span class="msym sm">check_circle</span>Активувати</button>

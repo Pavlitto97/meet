@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { launchApp, closeApp, testPngBuffer, type LaunchedApp } from './helpers';
+import { launchApp, closeApp, testPngBuffer, gotoGroupList, type LaunchedApp } from './helpers';
 
 // Наскрізні UI-флоу БЕЗ звертань до OpenRouter (грошей не витрачає):
 // групи (CRUD/активація) → учасники (source-аплоад) → прев'ю рендеру → скрін → налаштування.
@@ -17,6 +17,7 @@ test.afterAll(async () => {
 
 test('групи: дефолтна «Група 1» існує і активна', async () => {
   const win = launched.win;
+  await gotoGroupList(win); // вкладка авто-перекидає на активну групу → список через ?list=1
   const card = win.locator('.group-card');
   await expect(card).toHaveCount(1);
   await expect(card.locator('.group-name')).toHaveText('Група 1');
@@ -25,6 +26,7 @@ test('групи: дефолтна «Група 1» існує і активна
 
 test('групи: створення нової групи відкриває її учасників', async () => {
   const win = launched.win;
+  await gotoGroupList(win);
   await win.getByRole('button', { name: 'Створити групу' }).click();
   await win.locator('.modal-input').fill('Тестова група');
   await win.getByRole('button', { name: 'Створити', exact: true }).click();
@@ -391,7 +393,7 @@ test('налаштування: окрема плашка «API-токени», 
 
 test('групи: видалення тестової групи переключає активну назад', async () => {
   const win = launched.win;
-  await win.locator('.tabs .tab', { hasText: 'Групи' }).click();
+  await gotoGroupList(win);
   await expect(win.locator('.group-card')).toHaveCount(2);
 
   const testCard = win.locator('.group-card', { hasText: 'Тестова група' });

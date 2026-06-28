@@ -10,7 +10,7 @@
       <b>Активна</b> група йде у перегляд зустрічі та скріни.
     </p>
 
-    <div class="group-grid">
+    <div v-if="ready" class="group-grid">
       <div v-for="g in groups" :key="g.id" class="slot group-card" :class="{ 'is-active': g.active }" :data-gid="g.id" @click="open(g)">
         <div class="queue-head">
           <span class="msym group-ico">{{ g.active ? 'verified' : 'group' }}</span>
@@ -35,15 +35,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { call } from '@/lib/api'
 import { useUiStore } from '@/stores/ui'
 import type { Group } from '@/types'
 
 const ui = useUiStore()
 const router = useRouter()
+const route = useRoute()
 const groups = ref<Group[]>([])
+// Список рендеримо лише коли вирішили НЕ перекидати на активну групу (інакше блимав
+// би список перед редіректом).
+const ready = ref(false)
 
 async function load(): Promise<void> {
   groups.value = await call<Group[]>('GET', '/api/groups')
@@ -93,5 +97,36 @@ async function del(g: Group): Promise<void> {
   await load()
 }
 
-onMounted(load)
+// Вхід у вкладку «Групи» → автоматично відкриваємо детальну сторінку АКТИВНОЇ
+// групи. Список усіх груп показуємо лише коли прийшли через кнопку «← Групи»
+// (вона веде на ?list=1) — тоді редірект пропускаємо.
+onMounted(async () => {
+  const wantList = !!route.query.list // ?list=1 (через «← Групи») → показуємо список
+  await load()
+  // Якщо за час завантаження користувач уже пішов з /admin/groups (напр. клікнув
+  // іншу вкладку) — НЕ редіректимо (інакше висмикнули б його назад).
+  if (router.currentRoute.value.path !== '/admin/groups') {
+    ready.value = true
+    return
+  }
+  if (!wantList) {
+    const active = groups.value.find((g) => g.active)
+    if (active) {
+      router.replace(`/admin/groups/${active.id}`)
+      return
+    }
+  }
+  ready.value = true
+})
+
+// Якщо вже на списку (?list=1) і користувач знову тиснe вкладку «Групи» (→ той самий
+// маршрут без ?list, компонент НЕ перемонтовується) — теж перекидаємо на активну.
+watch(
+  () => route.query.list,
+  (list) => {
+    if (list || router.currentRoute.value.path !== '/admin/groups') return
+    const active = groups.value.find((g) => g.active)
+    if (active) router.replace(`/admin/groups/${active.id}`)
+  }
+)
 </script>

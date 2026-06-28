@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { launchApp, closeApp, type LaunchedApp } from './helpers';
+import { launchApp, closeApp, gotoGroupList, type LaunchedApp } from './helpers';
 
 /**
  * Сценарій (навчальний): видалений учасник зникає з рендеру і лічильник
@@ -81,6 +81,7 @@ async function apiParticipantCount(gid: number): Promise<number> {
 test('Група А: створення і активація', async () => {
   const win = launched.win;
 
+  await gotoGroupList(win); // вкладка авто-перекидає на активну групу → список через ?list=1
   await win.getByRole('button', { name: 'Створити групу' }).click();
   await win.locator('.modal-input').fill('Група А');
   await win.getByRole('button', { name: 'Створити', exact: true }).click();
@@ -202,8 +203,8 @@ test('скрін кінця зустрічі: знімається і зʼявл
 test('cleanup: Група А видаляється, активною стає Група 1', async () => {
   const win = launched.win;
 
-  // Переходимо до списку груп
-  await win.locator('.tabs .tab', { hasText: 'Групи' }).click();
+  // Переходимо до списку груп (через ?list=1 — вкладка авто-перекидає на активну)
+  await gotoGroupList(win);
   const grupACard = win.locator('.group-card', { hasText: 'Група А' });
   await expect(grupACard).toBeVisible();
 
