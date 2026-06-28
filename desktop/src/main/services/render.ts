@@ -24,6 +24,7 @@ import {
   utf8ToLatin1,
   emojiCodepoints,
   defaultParticipants,
+  TEMPLATE_SPACE,
 } from './config';
 import { parseCam, camIsServer, camHeadMarkup, degradeBlob } from './degrade';
 import { activeGroupId, groupSlide } from './groups';
@@ -125,6 +126,39 @@ function pluralOsoba(n: number): string {
 const ORIGINAL_OTHERS_LABEL = 'Ще 3 особи';
 const ORIGINAL_OTHERS_COUNT = 3;
 
+// Рядок-шаблон панелі «Люди» (один <div role="listitem">…</div>) для КЛОНУВАННЯ
+// під учасників понад 10 слотів. Кешуємо при першому читанні шаблону.
+let panelRowTemplate: string | null = null;
+
+// Кінець елемента <div …> від його відкриття openIdx (balanced count <div/</div>).
+// Повертає індекс ОДРАЗУ ПІСЛЯ його закривального </div>, або -1.
+function findDivClose(s: string, openIdx: number): number {
+  let depth = 1;
+  const re = /<\/?div\b/g;
+  re.lastIndex = s.indexOf('>', openIdx) + 1;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    depth += m[0] === '</div' ? -1 : 1;
+    if (depth === 0) return s.indexOf('>', m.index) + 1;
+  }
+  return -1;
+}
+
+// Витягуємо повний рядок панелі «Люди» для device 295 (звичайний учасник) як
+// шаблон клону. Balanced-match, тож вкладені div-и (меню/тултіп) не ламають межу.
+function extractPanelRow(html: string): string | null {
+  const marker = '<div role="listitem"';
+  let p = 0;
+  while ((p = html.indexOf(marker, p)) !== -1) {
+    if (html.slice(p, p + 400).includes('/devices/295"')) {
+      const end = findDivClose(html, p);
+      return end !== -1 ? html.slice(p, end) : null;
+    }
+    p += marker.length;
+  }
+  return null;
+}
+
 export async function renderMeet(
   which = 'start',
   fit: string | null = null,
@@ -140,6 +174,7 @@ export async function renderMeet(
     cachedMeetHtml = fs.readFileSync(meetHtmlPath()).toString('latin1');
     fileRoles = computeFileRoles(cachedMeetHtml);
     tileFiles = new Set(Object.keys(fileRoles).filter((f) => fileRoles![f] === 'tile'));
+    panelRowTemplate = extractPanelRow(cachedMeetHtml);
   }
   let html = cachedMeetHtml;
 
@@ -176,7 +211,13 @@ export async function renderMeet(
     assigned.push({ slot: nonSandroSlots[i], row: rest[i] });
   }
   const usedSlots = new Set(assigned.map((a) => a.slot));
-  const othersAssigned = assigned.filter((a) => isOtherSlot(a.slot)).length;
+
+  // Надмір: учасники понад 10 не-Sandro слотів. Шаблон не має для них плиток/рядків,
+  // тож КЛОНУЄМО рядок панелі «Люди» (нижче) і рахуємо їх у «Ще N осіб». «Інші» =
+  // усі не-Sandro поза 7 плитками-фото (слоти 302/306/307 + надмір).
+  const photoTileCount = nonSandroSlots.filter((d) => !isOtherSlot(d)).length; // 7
+  const overflowRows = rest.slice(nonSandroSlots.length); // ранги ≥ 10
+  const othersCount = Math.max(0, rest.length - photoTileCount);
 
   const letterColors = groupLetterColors(groupId);
   // Ім'я для показу: custom_name або (фолбек) читабельний original_name.
@@ -221,9 +262,33 @@ export async function renderMeet(
   }
   for (const [tok, name] of swaps) html = html.replaceAll(tok, () => name);
 
+  // ── рядки панелі «Люди» для НАДМІРУ (учасники понад 10 слотів) ──
+  // Шаблон має лише 10 не-Sandro рядків; для 11-го+ КЛОНУЄМО рядок-шаблон (device
+  // 295) зі своїм ім'ям + буквеною аватаркою і вставляємо в кінець списку «Люди».
+  if (overflowRows.length > 0 && panelRowTemplate) {
+    let clones = '';
+    for (let i = 0; i < overflowRows.length; i++) {
+      const name = displayNameOf(overflowRows[i]);
+      const nameL1 = utf8ToLatin1(name);
+      const color = LETTER_COLORS[(nonSandroSlots.length + i) % LETTER_COLORS.length];
+      const avatar = letterAvatarDataUrl(name, color);
+      const synthId = `${TEMPLATE_SPACE}/devices/ov${i}`;
+      clones += panelRowTemplate
+        .replace(/data-participant-id="[^"]*"/, () => `data-participant-id="${synthId}"`)
+        .replace(/data-scroll-target="[^"]*"/, () => `data-scroll-target="${synthId}"`)
+        .replace(/aria-label="[^"]*"/, () => `aria-label="${nameL1}"`)
+        .replace(/<span class="zWGUib">[^<]*<\/span>/, () => `<span class="zWGUib">${nameL1}</span>`)
+        .replace(/src="assets\/img\/people\/u\d+\.svg"/, () => `src="${avatar}"`);
+    }
+    const cOpen = html.indexOf('<div role="list" class="AE8xFb');
+    const cEnd = cOpen !== -1 ? findDivClose(html, cOpen) : -1;
+    if (cEnd !== -1) html = html.slice(0, cEnd - '</div>'.length) + clones + html.slice(cEnd - '</div>'.length);
+  }
+
   // ─ лічильник учасників (бейдж «Люди» fs3avc + заголовок «Співавтори» MKVSQd) ─
-  // = к-сть зайнятих слотів + 1: Sandro дублюється у панелі як презентер (рядок 320).
-  const headcount = assigned.length + 1;
+  // = усі рядки панелі: Sandro двічі (плитка 316 + презентер 320) + усі не-Sandro
+  // (зайняті слоти + клоновані рядки надміру). Без sandroRow слот 316 прихований.
+  const headcount = (sandroRow ? 2 : 1) + rest.length;
   html = html.replace(/(<div class="fs3avc">)\d+(<\/div>)/, (_m, a, b) => a + headcount + b);
   html = html.replace(/(<div class="MKVSQd">)\d+(<\/div>)/, (_m, a, b) => a + headcount + b);
 
@@ -245,14 +310,15 @@ export async function renderMeet(
     }
   }
 
-  // «Ще N осіб»: N = к-сть учасників у «інших»-слотах. 0 → ховаємо всю плитку;
-  // інакше правимо число+форму (кружечки вже заповнені/приховані вище за слотами).
-  if (othersAssigned <= 0) {
+  // «Ще N осіб»: N = усі не-Sandro поза 7 плитками-фото (слоти 302/306/307 + надмір).
+  // 0 → ховаємо всю плитку; інакше правимо число+форму (кружечки-прев'ю заповнені/
+  // приховані вище за слотами; лейбл росте без обмеження — навіть коли надмір > 3).
+  if (othersCount <= 0) {
     hideSelectors.push('.dkjMxf:has(img.qg7mD)'); // плитка «Ще N осіб» — цілком
-  } else if (othersAssigned !== ORIGINAL_OTHERS_COUNT) {
+  } else if (othersCount !== ORIGINAL_OTHERS_COUNT) {
     html = html.replaceAll(
       utf8ToLatin1(ORIGINAL_OTHERS_LABEL),
-      () => utf8ToLatin1(`Ще ${othersAssigned} ${pluralOsoba(othersAssigned)}`)
+      () => utf8ToLatin1(`Ще ${othersCount} ${pluralOsoba(othersCount)}`)
     );
   }
 
