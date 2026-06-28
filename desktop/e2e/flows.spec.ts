@@ -206,6 +206,87 @@ test('панель «Люди»: фото не показується — зав
   expect(probe.tilePhoto).toBe(true);
 });
 
+test('видалений «інший» зникає, але плитка «Ще N осіб» ЛИШАЄТЬСЯ', async () => {
+  const win = launched.win;
+
+  // Жертва — слот плитки «Ще N осіб» (302/306/307). ВАЖЛИВО: спершу знімаємо
+  // skipped (PUT skipped:false) — саме так виглядали реальні групи (міграція/
+  // правки лишали skipped=0), і через це ціла плитка «Ще N осіб» помилково
+  // зникала. Лічильник «інших» має рахуватись за ШАБЛОНОМ, а не за цим прапором.
+  const before = await win.evaluate(async () => {
+    const groups = await (await fetch('/api/groups')).json();
+    const active = groups.find((g: any) => g.active).id;
+    const ps = await (await fetch('/api/participants?group=' + active)).json();
+    const others = ps.filter((p: any) => /\/(302|306|307)$/.test(p.device_id)); // 3 слоти «Ще N осіб»
+    // Знімаємо skipped з УСІХ трьох (точна копія реальної групи «Клас А»): на
+    // старому коді це давало remainingOthers=0 → плитку «Ще N осіб» ховало цілком.
+    for (const o of others) {
+      await fetch('/api/participants/' + o.id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skipped: false }),
+      });
+    }
+    const victim = others[0];
+    const html = await (await fetch('/api/render?which=start')).text();
+    return {
+      victimId: victim.id,
+      victimDevice: victim.device_id,
+      otherIds: others.map((o: any) => o.id),
+      hasLabel3: html.includes('Ще 3 особи'),
+      badge12: html.includes('<div class="fs3avc">12</div>'),
+      panel12: html.includes('<div class="MKVSQd">12</div>'),
+    };
+  });
+  expect(before.hasLabel3).toBe(true);
+  expect(before.badge12).toBe(true);
+  expect(before.panel12).toBe(true);
+
+  // Видаляємо → рендер ховає ЛИШЕ появи цього слота й оновлює лічильники, але
+  // плитка «Ще N осіб» лишається (тепер «Ще 2 особи»).
+  const after = await win.evaluate(async (v) => {
+    await fetch('/api/participants/' + v.victimId, { method: 'DELETE' });
+    const html = await (await fetch('/api/render?which=start')).text();
+    // Кружечки-прев'ю плитки «Ще N осіб» (img class qg7mD): після видалення одного
+    // з трьох мають лишитись ДВА переназначені кружечки (data:-літери), без жодного
+    // недоторканого template-src (assets/img/people/uN.svg) і без прихованих слотів.
+    const circles = [...html.matchAll(/<img\b[^>]*?class="[^"]*qg7mD[^"]*"[^>]*?>/g)].map((m) => m[0]);
+    return {
+      hidesRow:
+        html.includes('[role="listitem"][data-participant-id="' + v.victimDevice + '"]') &&
+        html.includes('display:none!important'),
+      othersTileHidden: html.includes('.dkjMxf:has(img.qg7mD)'), // регресія: НЕ має бути
+      circlesData: circles.filter((t) => /src="data:/.test(t)).length, // переназначені літери
+      circlesTemplate: circles.filter((t) => /src="assets\/img\/people\//.test(t)).length, // не переназначені
+      label2: html.includes('Ще 2 особи'),
+      label3gone: !html.includes('Ще 3 особи'),
+      badge11: html.includes('<div class="fs3avc">11</div>'),
+      panel11: html.includes('<div class="MKVSQd">11</div>'),
+    };
+  }, { victimId: before.victimId, victimDevice: before.victimDevice });
+  expect(after.hidesRow).toBe(true); // рядок панелі «Люди» прихований CSS-ом
+  expect(after.othersTileHidden).toBe(false); // ⚠️ плитка «Ще N осіб» НЕ зникає цілком
+  expect(after.circlesData).toBe(2); // ⚠️ ДВА кружечки (Денис+Максим), а не один
+  expect(after.circlesTemplate).toBe(0); // жоден слот не лишився з template-src
+  expect(after.label2).toBe(true); // «Ще 3 особи» → «Ще 2 особи»
+  expect(after.label3gone).toBe(true);
+  expect(after.badge11).toBe(true); // бейдж «Люди»: 12 → 11
+  expect(after.panel11).toBe(true); // заголовок «Співавтори»: 12 → 11
+
+  // Прибираємо за собою: повертаємо видалений слот і прапор skipped усім трьом
+  // (наступні тести чекають 11 рядків і 3 skipped).
+  await win.evaluate(async (v) => {
+    await fetch('/api/participants/' + v.victimId + '/restore', { method: 'POST' });
+    for (const id of v.otherIds) {
+      await fetch('/api/participants/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ skipped: true }),
+      });
+    }
+  }, { victimId: before.victimId, otherIds: before.otherIds });
+});
+
 test('учасники: видалення дефолтного слота і відновлення', async () => {
   const win = launched.win;
   const rows = win.locator('table.data tbody tr');
