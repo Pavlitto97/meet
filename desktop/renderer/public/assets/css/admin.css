@@ -417,6 +417,19 @@ button.thumb.as-btn:hover { border-color: var(--accent); color: var(--accent); b
 .modal .modal-actions button.reject { background: var(--danger-bg); color: var(--danger-fg); }
 .modal .modal-actions button.reject:hover { background: #5a2a2a; }
 
+/* ─── Великий модал прев'ю зображення (скріни) + повноекран ────────────────────── */
+/* Модал прев'ю скрінів більший за дефолтний; зображення клікабельне на весь екран. */
+.modal.modal-img { max-width: 94vw; max-height: 95vh; }
+.modal.modal-img .gen-preview { max-height: 80vh; }
+.modal.modal-img .gen-preview img { max-height: 80vh; }
+.modal.modal-img .gen-preview.zoomable { cursor: zoom-in; }
+.modal.modal-img .gen-preview.zoomable:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Повноекранний оверлей зображення (поверх усього). */
+.img-fs { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.92); display: flex; align-items: center; justify-content: center; padding: 16px; cursor: zoom-out; animation: scrimIn 150ms var(--ease); }
+.img-fs img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-out; }
+.img-fs-close { position: fixed; top: 16px; right: 16px; width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.img-fs-close:hover { background: rgba(0,0,0,.8); }
+
 /* ─── Кроп-модалка (ручне виділення області генерації) ─────────────────────────
    Велика фіксована робоча область: модалка займає майже весь екран, зображення
    вписується БЕЗ внутрішніх скролів (розмір рахує JS у CropModal.refit()). */
