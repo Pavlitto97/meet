@@ -267,6 +267,12 @@ input[type=checkbox] { accent-color: var(--accent); width: 18px; height: 18px; c
 .num-cell .rownum { min-width: 18px; text-align: right; color: var(--muted); }
 .num-cell .reorder { display: flex; gap: 2px; }
 
+/* Drag-and-drop сортування рядків: ручка + стан перетягування */
+.drag-handle { color: var(--muted); cursor: grab; user-select: none; font-size: 20px; }
+.drag-handle:hover { color: var(--text); }
+table.data tbody tr.dragging { opacity: .45; background: var(--state-hover); }
+table.data tbody tr.dragging td { border-top: 1px solid var(--accent); border-bottom: 1px solid var(--accent); }
+
 /* ─── Чіпи / бейджі (Material chips) ──────────────────────────────────────────── */
 .badge {
   display: inline-flex; align-items: center; font-size: 11px; font-weight: 500;

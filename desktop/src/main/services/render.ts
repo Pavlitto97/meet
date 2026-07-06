@@ -33,8 +33,9 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Буквена SVG-аватарка (та сама форма, що в scripts/process-template.mjs) як
- * data:-URI. Використовується, коли учасника перейменували, а фото не задали —
- * літера оновлюється, колір кружечка лишається рідним для плитки.
+ * data:-URI. Використовується там, де фото не показується (панель «Люди»,
+ * кружечки «Ще N осіб», бейдж People) або не задане — літера й колір ідуть
+ * від актуального імені учасника.
  */
 function letterAvatarDataUrl(name: string, color: string): string {
   const letter = [...name.trim()][0]?.toUpperCase() ?? '?';
@@ -48,34 +49,19 @@ function letterAvatarDataUrl(name: string, color: string): string {
   return 'data:image/svg+xml;base64,' + Buffer.from(svg, 'utf8').toString('base64');
 }
 
-// ─── Кольори кружечків по групі ────────────────────────────────────────────────
-// Вимога: у межах групи кольори/місця ОДНАКОВІ на «початку» і «кінці» (скріни
-// мають збігатись), але різні групи можуть мати різний розклад. Тому жодного
-// Math.random — детермінований PRNG, сід = id групи.
-function mulberry32(seed: number): () => number {
-  let s = seed | 0;
-  return () => {
-    s = (s + 0x6d2b79f5) | 0;
-    let t = Math.imul(s ^ (s >>> 15), 1 | s);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** device_id → колір кружечка для групи. Sandro закріплений (#8d6e63, «1 в 1»). */
-function groupLetterColors(groupId: number): Record<string, string> {
-  const palette = [...LETTER_COLORS];
-  const rnd = mulberry32(groupId ^ 0x9e3779b9);
-  for (let i = palette.length - 1; i > 0; i--) {
-    const j = Math.floor(rnd() * (i + 1));
-    [palette[i], palette[j]] = [palette[j], palette[i]];
+// ─── Кольори кружечків від ІМЕНІ ───────────────────────────────────────────────
+// Вимога: колір буквеної аватарки — фіксована функція імені учасника: те саме
+// ім'я → завжди той самий колір, у будь-якій групі, на будь-якій позиції і на
+// «початку»/«кінці» однаково. Жодних random/PRNG-розкладів — FNV-1a hash
+// нормалізованого імені по палітрі Meet. Sandro закріплений окремо (#8d6e63).
+function nameColor(name: string): string {
+  const key = name.trim().toLowerCase();
+  let h = 0x811c9dc5;
+  for (const ch of key) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193);
   }
-  const map: Record<string, string> = {};
-  let k = 0;
-  for (const device of Object.keys(PARTICIPANT_ASSETS)) {
-    map[device] = device === SANDRO_DEVICE ? SANDRO_COLOR : palette[k++ % palette.length];
-  }
-  return map;
+  return LETTER_COLORS[(h >>> 0) % LETTER_COLORS.length];
 }
 
 /** original_name у БД — latin1-простір (байти UTF-8); назад у читабельний рядок. */
@@ -219,7 +205,6 @@ export async function renderMeet(
   const overflowRows = rest.slice(nonSandroSlots.length); // ранги ≥ 10
   const othersCount = Math.max(0, rest.length - photoTileCount);
 
-  const letterColors = groupLetterColors(groupId);
   // Ім'я для показу: custom_name або (фолбек) читабельний original_name.
   const displayNameOf = (row: any): string =>
     row.custom_name && String(row.custom_name).trim() !== ''
@@ -228,7 +213,8 @@ export async function renderMeet(
 
   // ── Pass 1: аватарки/літери у файли слота ──
   // Фото — лише у tile-файли слота; решта файлів (панель/кружечок/бейдж) — буквений
-  // кружечок (колір — за СЛОТОМ, тож позиція має стабільний колір на «початку»/«кінці»).
+  // кружечок (колір — від ІМЕНІ, тож учасник має той самий колір на «початку»/«кінці»
+  // і не міняє його при пересортуванні).
   for (const { slot, row } of assigned) {
     const assets = PARTICIPANT_ASSETS[slot];
     const endBuf = which === 'end' ? toBuffer(row.avatar_end) : null;
@@ -240,7 +226,8 @@ export async function renderMeet(
       if (camI > 0 && camIsServer(camMethod)) [blob, mime] = await degradeBlob(blob, mime, camMethod, camI);
       photoUrl = 'data:' + mime + ';base64,' + blob.toString('base64');
     }
-    const letterUrl = letterAvatarDataUrl(displayNameOf(row), letterColors[slot] ?? assets.color);
+    const name = displayNameOf(row);
+    const letterUrl = letterAvatarDataUrl(name, slot === SANDRO_DEVICE ? SANDRO_COLOR : nameColor(name));
     for (const f of assets.files) {
       const url = photoUrl !== null && tileFiles!.has(f) ? photoUrl : letterUrl;
       html = html.replaceAll(`assets/img/people/${f}.svg`, url);
@@ -270,8 +257,7 @@ export async function renderMeet(
     for (let i = 0; i < overflowRows.length; i++) {
       const name = displayNameOf(overflowRows[i]);
       const nameL1 = utf8ToLatin1(name);
-      const color = LETTER_COLORS[(nonSandroSlots.length + i) % LETTER_COLORS.length];
-      const avatar = letterAvatarDataUrl(name, color);
+      const avatar = letterAvatarDataUrl(name, nameColor(name));
       const synthId = `${TEMPLATE_SPACE}/devices/ov${i}`;
       clones += panelRowTemplate
         .replace(/data-participant-id="[^"]*"/, () => `data-participant-id="${synthId}"`)

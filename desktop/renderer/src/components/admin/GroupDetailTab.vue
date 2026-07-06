@@ -48,9 +48,19 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="(p, idx) in participants" :key="p.id" :class="{ skipped: p.skipped }">
+        <tr
+          v-for="(p, idx) in participants"
+          :key="p.id"
+          :class="{ skipped: p.skipped, dragging: dragId === p.id }"
+          :draggable="dragArmed === p.id"
+          @dragstart="onDragStart(p, $event)"
+          @dragover.prevent="onDragOver(p)"
+          @drop.prevent
+          @dragend="onDragEnd"
+        >
           <td>
             <div class="num-cell">
+              <span class="msym drag-handle" title="затисни і перетягни, щоб змінити порядок" @mousedown="armDrag(p.id)">drag_indicator</span>
               <span class="rownum mono">{{ idx + 1 }}</span>
               <div class="reorder">
                 <button class="iconbtn btn-sm" title="вище" :disabled="idx === 0" @click="move(idx, -1)"><span class="msym sm">arrow_upward</span></button>
@@ -184,6 +194,60 @@ async function move(idx: number, dir: -1 | 1): Promise<void> {
   ;[order[idx], order[j]] = [order[j], order[idx]]
   await call('POST', '/api/participants/reorder', { group_id: groupId.value, order })
   await load()
+}
+
+// ── Drag-and-drop сортування ──
+// Рядок draggable ЛИШЕ коли mousedown стався на ручці (dragArmed) — інакше
+// перетягування конфліктувало б із виділенням тексту в полі імені. Під час
+// dragover список пересортовується наживо (візуальний прев'ю), а порядок
+// зберігається один раз на dragend.
+const dragArmed = ref<number | null>(null)
+const dragId = ref<number | null>(null)
+let dragMoved = false
+
+function armDrag(id: number): void {
+  dragArmed.value = id
+  // Якщо drag так і не почався (просто клік) — роззброїти на відпусканні миші.
+  window.addEventListener('mouseup', () => { if (dragId.value === null) dragArmed.value = null }, { once: true })
+}
+
+function onDragStart(p: Participant, e: DragEvent): void {
+  if (dragArmed.value !== p.id) {
+    e.preventDefault()
+    return
+  }
+  dragId.value = p.id
+  dragMoved = false
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(p.id))
+  }
+}
+
+function onDragOver(target: Participant): void {
+  if (dragId.value === null || target.id === dragId.value) return
+  const list = participants.value
+  const from = list.findIndex((x) => x.id === dragId.value)
+  const to = list.findIndex((x) => x.id === target.id)
+  if (from < 0 || to < 0 || from === to) return
+  list.splice(to, 0, list.splice(from, 1)[0])
+  dragMoved = true
+}
+
+async function onDragEnd(): Promise<void> {
+  const wasDragging = dragId.value !== null && dragMoved
+  dragId.value = null
+  dragArmed.value = null
+  dragMoved = false
+  if (!wasDragging) return
+  // finally: при невдалому POST (call() тостить і кидає) перечитуємо список,
+  // щоб UI не показував порядок, якого немає в БД.
+  try {
+    await call('POST', '/api/participants/reorder', { group_id: groupId.value, order: participants.value.map((x) => x.id) })
+    ui.toast('Порядок збережено', 'ok')
+  } finally {
+    await load()
+  }
 }
 
 function startUpload(id: number, kind: 'source' | 'start' | 'slide'): void {
