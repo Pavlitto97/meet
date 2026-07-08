@@ -1,0 +1,468 @@
+/**
+ * Генерація Meet HTML із правками (шаблон mqy-kiph-fci).
+ *
+ * Текстова заміна по сирому HTML БАЙТАМИ — НЕ DOM-парсинг. Працюємо у latin1-рядку
+ * (1 символ = 1 байт), кирилиця лишається байт-у-байт (шаблон — чистий UTF-8).
+ *
+ * Аватарки: кожен <img> учасника в шаблоні посилається на УНІКАЛЬНИЙ файл
+ * assets/img/people/uN.svg (буквена аватарка; згенеровано process-template.mjs).
+ * Підміна йде глобальним replaceAll по імені файла — плитка (m0DVAf+SOQwsf),
+ * рядок панелі «Люди» (KjWwNd), кружечки «Ще 3 особи» і бейдж People (Qw4c9e)
+ * одного учасника оновлюються разом, без офсетної арифметики.
+ */
+import fs from 'node:fs';
+import { all, toBuffer } from './db';
+import { getSettings } from './settings';
+import { meetHtmlPath } from './paths';
+import {
+  ORIGINAL_MEETING_CODE,
+  ORIGINAL_TIME,
+  PARTICIPANT_ASSETS,
+  LETTER_COLORS,
+  SANDRO_DEVICE,
+  SANDRO_COLOR,
+  utf8ToLatin1,
+  emojiCodepoints,
+  defaultParticipants,
+  TEMPLATE_SPACE,
+} from './config';
+import { parseCam, camIsServer, camHeadMarkup, degradeBlob } from './degrade';
+import { activeGroupId, groupSlide } from './groups';
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * Буквена SVG-аватарка (та сама форма, що в scripts/process-template.mjs) як
+ * data:-URI. Використовується там, де фото не показується (панель «Люди»,
+ * кружечки «Ще N осіб», бейдж People) або не задане — літера й колір ідуть
+ * від актуального імені учасника.
+ */
+function letterAvatarDataUrl(name: string, color: string): string {
+  const letter = [...name.trim()][0]?.toUpperCase() ?? '?';
+  const safe = letter.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240">' +
+    `<rect width="240" height="240" fill="${color}"/>` +
+    `<text x="120" y="124" font-family="'App Sans','Roboto','Helvetica Neue',Arial,sans-serif"` +
+    ` font-size="118" fill="#ffffff" text-anchor="middle" dominant-baseline="central">${safe}</text>` +
+    '</svg>';
+  return 'data:image/svg+xml;base64,' + Buffer.from(svg, 'utf8').toString('base64');
+}
+
+// ─── Кольори кружечків від ІМЕНІ (унікальні в межах групи) ─────────────────────
+// Вимога: колір буквеної аватарки — стабільна функція імені (те саме ім'я → той
+// самий колір на «початку»/«кінці» й при будь-якому порядку), АЛЕ в межах однієї
+// групи кольори не повторюються. Тому: (1) бажаний індекс — FNV-1a hash імені по
+// палітрі; (2) assignAvatarColors дедуплікує — якщо бажаний зайнятий, детерміновано
+// зсувається до наступного вільного. Sandro закріплений окремо (#8d6e63), тож brown
+// у палітрі відсутній і у пул не потрапляє.
+function nameColorIndex(name: string): number {
+  const key = name.trim().toLowerCase();
+  let h = 0x811c9dc5;
+  for (const ch of key) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0) % LETTER_COLORS.length;
+}
+
+// Призначає кожному імені унікальний колір палітри. Порядок призначення — за
+// ВІДСОРТОВАНИМ іменем (не за позицією), тож пересортування учасників кольори не
+// чіпає, а «початок»/«кінець» (та сама група → той самий набір імен) фарбуються
+// однаково. За колізії бажаного індексу зсуваємось уперед по палітрі (wraparound);
+// якщо унікальних імен більше за палітру — надлишок неминуче переюзовує кольори.
+function assignAvatarColors(names: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  const used = new Set<string>();
+  const unique = [...new Set(names)].sort();
+  for (const name of unique) {
+    const want = nameColorIndex(name);
+    let color = LETTER_COLORS[want];
+    for (let k = 0; k < LETTER_COLORS.length; k++) {
+      const cand = LETTER_COLORS[(want + k) % LETTER_COLORS.length];
+      if (!used.has(cand)) {
+        color = cand;
+        break;
+      }
+    }
+    used.add(color);
+    map.set(name, color);
+  }
+  return map;
+}
+
+/** original_name у БД — latin1-простір (байти UTF-8); назад у читабельний рядок. */
+const latin1SpaceToUtf8 = (s: string) => Buffer.from(s, 'latin1').toString('utf8');
+
+// index.html read-only й рендером не мутується — читаємо з диска ОДИН раз
+// (latin1) і переюзаємо. Кожен рендер працює на копіях через replace.
+let cachedMeetHtml: string | null = null;
+
+// Роль кожного буквеного файла uN.svg у шаблоні (за класом його <img>):
+//  • tile   — плитка сітки (m0DVAf/SOQwsf): ЛИШЕ сюди підставляється фото;
+//  • panel  — рядок панелі «Люди» (KjWwNd);
+//  • circle — кружечок плитки «Ще N осіб» (qg7mD);
+//  • badge  — мініатюра у бейджі People на тулбарі (Qw4c9e).
+// panel/circle/badge — ЗАВЖДИ буквений кружечок (фото в списку «Люди» не показуємо).
+// Карту юзаємо двічі: (1) фото лише у tile-файли; (2) приховати появи видаленого
+// учасника, що НЕ покриті data-participant-id (circle/badge живуть поза плиткою/рядком).
+type FileRole = 'tile' | 'panel' | 'circle' | 'badge';
+let fileRoles: Record<string, FileRole> | null = null;
+let tileFiles: Set<string> | null = null;
+
+function computeFileRoles(html: string): Record<string, FileRole> {
+  const out: Record<string, FileRole> = {};
+  const re = /<img\b[^>]*?src="assets\/img\/people\/(u\w+)\.svg"[^>]*>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const cls = /class="([^"]*)"/.exec(m[0])?.[1] ?? '';
+    let role: FileRole | null = null;
+    if (cls.includes('m0DVAf') || cls.includes('SOQwsf')) role = 'tile';
+    else if (cls.includes('qg7mD')) role = 'circle';
+    else if (cls.includes('Qw4c9e')) role = 'badge';
+    else if (cls.includes('KjWwNd')) role = 'panel';
+    if (role) out[m[1]] = role;
+  }
+  return out;
+}
+
+// Українська форма слова «особа» за числом (для лейбла «Ще N осіб»).
+function pluralOsoba(n: number): string {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'особа';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'особи';
+  return 'осіб';
+}
+
+// Лейбл «Ще N осіб» у шаблоні (3 слоти-«інші» 302/306/307; рівно 1 входження).
+const ORIGINAL_OTHERS_LABEL = 'Ще 3 особи';
+const ORIGINAL_OTHERS_COUNT = 3;
+
+// Рядок-шаблон панелі «Люди» (один <div role="listitem">…</div>) для КЛОНУВАННЯ
+// під учасників понад 10 слотів. Кешуємо при першому читанні шаблону.
+let panelRowTemplate: string | null = null;
+
+// Кінець елемента <div …> від його відкриття openIdx (balanced count <div/</div>).
+// Повертає індекс ОДРАЗУ ПІСЛЯ його закривального </div>, або -1.
+function findDivClose(s: string, openIdx: number): number {
+  let depth = 1;
+  const re = /<\/?div\b/g;
+  re.lastIndex = s.indexOf('>', openIdx) + 1;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    depth += m[0] === '</div' ? -1 : 1;
+    if (depth === 0) return s.indexOf('>', m.index) + 1;
+  }
+  return -1;
+}
+
+// Витягуємо повний рядок панелі «Люди» для device 295 (звичайний учасник) як
+// шаблон клону. Balanced-match, тож вкладені div-и (меню/тултіп) не ламають межу.
+function extractPanelRow(html: string): string | null {
+  const marker = '<div role="listitem"';
+  let p = 0;
+  while ((p = html.indexOf(marker, p)) !== -1) {
+    if (html.slice(p, p + 400).includes('/devices/295"')) {
+      const end = findDivClose(html, p);
+      return end !== -1 ? html.slice(p, end) : null;
+    }
+    p += marker.length;
+  }
+  return null;
+}
+
+export async function renderMeet(
+  which = 'start',
+  fit: string | null = null,
+  cam: string | null = null,
+  group: string | null = null
+): Promise<Buffer> {
+  if (which !== 'start' && which !== 'end') which = 'start';
+  const { method: camMethod, intensity: camI } = parseCam(cam);
+  // Учасники й імена — лише з однієї групи: явної (?group=) або активної.
+  const groupId = group && Number.isFinite(parseInt(group, 10)) ? parseInt(group, 10) : activeGroupId();
+
+  if (cachedMeetHtml === null) {
+    cachedMeetHtml = fs.readFileSync(meetHtmlPath()).toString('latin1');
+    fileRoles = computeFileRoles(cachedMeetHtml);
+    tileFiles = new Set(Object.keys(fileRoles).filter((f) => fileRoles![f] === 'tile'));
+    panelRowTemplate = extractPanelRow(cachedMeetHtml);
+  }
+  let html = cachedMeetHtml;
+
+  const rows = all(
+    'SELECT device_id, original_name, custom_name, user_added, avatar, avatar_mime, avatar_end, avatar_end_mime ' +
+      'FROM participants WHERE group_id = ? AND deleted = 0 AND skipped = 0 ORDER BY position',
+    [groupId]
+  );
+
+  // ─ розкладка учасників по слотах шаблону ЗА ПОЗИЦІЄЮ ─
+  // Шаблон має фіксований набір «слотів» (плитка+рядок панелі+кружечок+бейдж),
+  // кожен зі своїм device_id. Раніше учасник був жорстко прив'язаний до СВОГО
+  // device_id, тож сортування в редакторі (position) не рухало фото. Тепер
+  // ПАКУЄМО активних учасників у слоти за порядком position:
+  //  • Sandro (презентер) ЗАКРІПЛЕНИЙ у своєму слоті 316;
+  //  • решта заповнюють слоти [295..301] (7 плиток-фото), далі [302,306,307]
+  //    («Ще N осіб» — лише рядок+кружечок, без фото-плитки).
+  // Видалення → ущільнення без дірок; незаповнені (зайві) слоти ховаємо CSS-ом.
+  const slotOrder = Object.keys(PARTICIPANT_ASSETS); // [316, 295..301, 302,306,307]
+  const nonSandroSlots = slotOrder.filter((d) => d !== SANDRO_DEVICE);
+  const isOtherSlot = (device: string): boolean => {
+    const a = PARTICIPANT_ASSETS[device];
+    return !!a && a.files.every((f) => fileRoles![f] !== 'tile'); // без власної плитки-фото
+  };
+  const slotDefaultName: Record<string, string> = {};
+  for (const d of defaultParticipants()) slotDefaultName[d.device_id] = d.original_name;
+
+  // Пари (слот ← учасник): Sandro → 316 (закріплено), решта (за position) → по черзі.
+  const sandroRow = rows.find((r) => r.device_id === SANDRO_DEVICE) ?? null;
+  const rest = rows.filter((r) => r.device_id !== SANDRO_DEVICE); // вже ORDER BY position
+  const assigned: Array<{ slot: string; row: any }> = [];
+  if (sandroRow) assigned.push({ slot: SANDRO_DEVICE, row: sandroRow });
+  for (let i = 0; i < rest.length && i < nonSandroSlots.length; i++) {
+    assigned.push({ slot: nonSandroSlots[i], row: rest[i] });
+  }
+  const usedSlots = new Set(assigned.map((a) => a.slot));
+
+  // Надмір: учасники понад 10 не-Sandro слотів. Шаблон не має для них плиток/рядків,
+  // тож КЛОНУЄМО рядок панелі «Люди» (нижче) і рахуємо їх у «Ще N осіб». «Інші» =
+  // усі не-Sandro поза 7 плитками-фото (слоти 302/306/307 + надмір).
+  const photoTileCount = nonSandroSlots.filter((d) => !isOtherSlot(d)).length; // 7
+  const overflowRows = rest.slice(nonSandroSlots.length); // ранги ≥ 10
+  const othersCount = Math.max(0, rest.length - photoTileCount);
+
+  // Ім'я для показу: custom_name або (фолбек) читабельний original_name.
+  const displayNameOf = (row: any): string =>
+    row.custom_name && String(row.custom_name).trim() !== ''
+      ? String(row.custom_name)
+      : latin1SpaceToUtf8(String(row.original_name));
+
+  // Кольори буквених кружечків — унікальні в межах цієї групи. Рахуємо ОДИН раз по
+  // всіх не-Sandro учасниках (rest = плитки + «інші» + надмір), Sandro має свій
+  // закріплений колір. colorOf() → колір за іменем (з дедуплікованої мапи).
+  const colorMap = assignAvatarColors(rest.map((r) => displayNameOf(r)));
+  const colorOf = (name: string): string => colorMap.get(name) ?? LETTER_COLORS[nameColorIndex(name)];
+
+  // ── Pass 1: аватарки/літери у файли слота ──
+  // Фото — лише у tile-файли слота; решта файлів (панель/кружечок/бейдж) — буквений
+  // кружечок (колір — від ІМЕНІ, тож учасник має той самий колір на «початку»/«кінці»
+  // і не міняє його при пересортуванні).
+  for (const { slot, row } of assigned) {
+    const assets = PARTICIPANT_ASSETS[slot];
+    const endBuf = which === 'end' ? toBuffer(row.avatar_end) : null;
+    let blob: Buffer | null = endBuf && endBuf.length > 0 ? endBuf : toBuffer(row.avatar);
+    let mime: string | null = endBuf && endBuf.length > 0 ? row.avatar_end_mime : row.avatar_mime;
+    let photoUrl: string | null = null;
+    if (blob && blob.length > 0 && mime) {
+      // Серверні методи (gd/gd-jpeg) бейкають деградацію прямо в байти аватарки.
+      if (camI > 0 && camIsServer(camMethod)) [blob, mime] = await degradeBlob(blob, mime, camMethod, camI);
+      photoUrl = 'data:' + mime + ';base64,' + blob.toString('base64');
+    }
+    const name = displayNameOf(row);
+    const letterUrl = letterAvatarDataUrl(name, slot === SANDRO_DEVICE ? SANDRO_COLOR : colorOf(name));
+    for (const f of assets.files) {
+      const url = photoUrl !== null && tileFiles!.has(f) ? photoUrl : letterUrl;
+      html = html.replaceAll(`assets/img/people/${f}.svg`, url);
+    }
+  }
+
+  // ── Pass 2: імена — двофазно через плейсхолдери ──
+  // Шаблонне ім'я слота → унікальний токен, ПОТІМ токен → відображуване ім'я. Так
+  // вставлене ім'я (напр. «Денис») не перезамінюється наступним пошуком іншого
+  // шаблонного імені (глобальний replaceAll інакше зачепив би вже вставлений текст).
+  const swaps: Array<[string, string]> = [];
+  const named = assigned
+    .filter((a) => slotDefaultName[a.slot])
+    .map((a, i) => ({ tmpl: slotDefaultName[a.slot], tok: `\x00MEETNAME${i}\x00`, name: displayNameOf(a.row) }))
+    .sort((x, y) => y.tmpl.length - x.tmpl.length); // довші шаблонні імена — перші
+  for (const n of named) {
+    html = html.replaceAll(n.tmpl, () => n.tok);
+    swaps.push([n.tok, utf8ToLatin1(n.name)]);
+  }
+  for (const [tok, name] of swaps) html = html.replaceAll(tok, () => name);
+
+  // ── рядки панелі «Люди» для НАДМІРУ (учасники понад 10 слотів) ──
+  // Шаблон має лише 10 не-Sandro рядків; для 11-го+ КЛОНУЄМО рядок-шаблон (device
+  // 295) зі своїм ім'ям + буквеною аватаркою і вставляємо в кінець списку «Люди».
+  if (overflowRows.length > 0 && panelRowTemplate) {
+    let clones = '';
+    for (let i = 0; i < overflowRows.length; i++) {
+      const name = displayNameOf(overflowRows[i]);
+      const nameL1 = utf8ToLatin1(name);
+      const avatar = letterAvatarDataUrl(name, colorOf(name));
+      const synthId = `${TEMPLATE_SPACE}/devices/ov${i}`;
+      clones += panelRowTemplate
+        .replace(/data-participant-id="[^"]*"/, () => `data-participant-id="${synthId}"`)
+        .replace(/data-scroll-target="[^"]*"/, () => `data-scroll-target="${synthId}"`)
+        .replace(/aria-label="[^"]*"/, () => `aria-label="${nameL1}"`)
+        .replace(/<span class="zWGUib">[^<]*<\/span>/, () => `<span class="zWGUib">${nameL1}</span>`)
+        .replace(/src="assets\/img\/people\/u\d+\.svg"/, () => `src="${avatar}"`);
+    }
+    const cOpen = html.indexOf('<div role="list" class="AE8xFb');
+    const cEnd = cOpen !== -1 ? findDivClose(html, cOpen) : -1;
+    if (cEnd !== -1) html = html.slice(0, cEnd - '</div>'.length) + clones + html.slice(cEnd - '</div>'.length);
+  }
+
+  // ─ лічильник учасників (бейдж «Люди» fs3avc + заголовок «Співавтори» MKVSQd) ─
+  // = усі рядки панелі: Sandro двічі (плитка 316 + презентер 320) + усі не-Sandro
+  // (зайняті слоти + клоновані рядки надміру). Без sandroRow слот 316 прихований.
+  const headcount = (sandroRow ? 2 : 1) + rest.length;
+  html = html.replace(/(<div class="fs3avc">)\d+(<\/div>)/, (_m, a, b) => a + headcount + b);
+  html = html.replace(/(<div class="MKVSQd">)\d+(<\/div>)/, (_m, a, b) => a + headcount + b);
+
+  // ─ приховування ЗАЙВИХ (незаповнених) слотів ─
+  // Незаповнений слот лишився б рідною плиткою/рядком/кружечком шаблону — ховаємо
+  // CSS-ом (headInject): плитку сітки і рядок панелі «Люди» за data-participant-id,
+  // кружечок «Ще N осіб» (qg7mD) та бейдж People (Qw4c9e) — за унікальним src
+  // буквеного файла (у незайнятого слота src лишається недоторканим у Pass 1).
+  // :has() підтримується Chromium скріна (вже юзається у raster-стилях нижче).
+  const hideSelectors: string[] = [];
+  for (const slot of slotOrder) {
+    if (usedSlots.has(slot)) continue;
+    const idSel = `[data-participant-id="${slot}"]`;
+    hideSelectors.push(`.dkjMxf:has(> ${idSel})`); // плитка сітки (no-op для «інших»)
+    hideSelectors.push(`[role="listitem"]${idSel}`); // рядок панелі «Люди»
+    for (const f of PARTICIPANT_ASSETS[slot].files) {
+      if (fileRoles![f] === 'circle') hideSelectors.push(`.gdIo3e:has(> img[src="assets/img/people/${f}.svg"])`);
+      else if (fileRoles![f] === 'badge') hideSelectors.push(`.G9bi9d:has(> img[src="assets/img/people/${f}.svg"])`);
+    }
+  }
+
+  // «Ще N осіб»: N = усі не-Sandro поза 7 плитками-фото (слоти 302/306/307 + надмір).
+  // 0 → ховаємо всю плитку; інакше правимо число+форму (кружечки-прев'ю заповнені/
+  // приховані вище за слотами; лейбл росте без обмеження — навіть коли надмір > 3).
+  if (othersCount <= 0) {
+    hideSelectors.push('.dkjMxf:has(img.qg7mD)'); // плитка «Ще N осіб» — цілком
+  } else if (othersCount !== ORIGINAL_OTHERS_COUNT) {
+    html = html.replaceAll(
+      utf8ToLatin1(ORIGINAL_OTHERS_LABEL),
+      () => utf8ToLatin1(`Ще ${othersCount} ${pluralOsoba(othersCount)}`)
+    );
+  }
+
+  // ─ глобальні налаштування (код зустрічі, час 24h) ─
+  const s = getSettings(false);
+  const newCode = String((s.meeting_code ?? '') !== '' ? s.meeting_code : ORIGINAL_MEETING_CODE).trim();
+  if (newCode !== '' && newCode !== ORIGINAL_MEETING_CODE) {
+    html = html.replaceAll(ORIGINAL_MEETING_CODE, () => utf8ToLatin1(newCode));
+  }
+
+  // Час у шапці — 24-годинний (як в Україні), без AM/PM: рівно один
+  // <span jsname="W5i7Bf">13:41</span>; AM/PM-спан (d1rraf) у шаблоні порожній.
+  const timeKey = which === 'end' ? 'end_time' : 'start_time';
+  const newTime = String((s[timeKey] ?? '') !== '' ? s[timeKey] : ORIGINAL_TIME).trim();
+  if (newTime !== '' && newTime !== ORIGINAL_TIME) {
+    html = html.replace(
+      new RegExp(`(<span jsname="W5i7Bf">)${escapeRe(ORIGINAL_TIME)}(</span>)`),
+      (_m, a, b) => a + newTime + b
+    );
+  }
+
+  // ─ слайд презентації групи: <video data-uid="100"> → <img> зі слайдом ─
+  // Розмір/положення успадковуються від відео-області шаблону; зображення
+  // вписується contain на чорному тлі — як справжня презентація у Meet.
+  const slide = groupSlide(groupId);
+  if (slide) {
+    const slideUrl = 'data:' + slide[1] + ';base64,' + slide[0].toString('base64');
+    html = html.replace(/<video\b([^>]*?data-uid="100"[^>]*?)><\/video>/, (_m, attrs: string) => {
+      const style = /style="([^"]*)"/.exec(attrs)?.[1] ?? '';
+      const w = /width:\s*([\d.]+px)/.exec(style)?.[1] ?? '100%';
+      const h = /height:\s*([\d.]+px)/.exec(style)?.[1] ?? '100%';
+      return (
+        `<img class="Gv1mTb-aTv5jf" alt="" src="${slideUrl}" ` +
+        `style="width: ${w}; height: ${h}; object-fit: contain; background: #000; display: block;">`
+      );
+    });
+  }
+
+  // ─ emoji-кнопки реакцій (як у старому шаблоні; у цьому збереженні їх немає — no-op) ─
+  const emojiMap = emojiCodepoints();
+  html = html.replace(
+    /(<img\b[^>]*?\bdata-emoji="([^"]+)"[^>]*?\s)src="[^"]*"([^>]*?>)/g,
+    (full, pre, emoji, post) => {
+      const code = emojiMap[emoji];
+      if (!code) return full;
+      return pre + 'src="assets/img/emoji/' + code + '.png"' + post;
+    }
+  );
+
+  // Натуральний розмір сцени — з inline-стилю #yDmH0d (збережена сторінка).
+  let natW = 2560;
+  let natH = 1271;
+  const nm = /id="yDmH0d"[^>]*style="[^"]*\bwidth:\s*(\d+)px;\s*height:\s*(\d+)px/.exec(html);
+  if (nm) {
+    natW = parseInt(nm[1], 10);
+    natH = parseInt(nm[2], 10);
+  }
+
+  // <base href="/"> + override-стилі: РАСТРОВЕ data:-фото (jpeg/png/webp) розтягуємо
+  // на всю плитку; SVG-літери (data:image/svg+xml) лишаються рідними кружечками.
+  //
+  // Геометрія сцени: у збереженій сторінці c-wiz має width:100vw + overflow:hidden,
+  // тож у вікні, вужчому за natW, плитки учасників (x≥1604) КЛІПАЛИСЬ (чорна зона
+  // на скрінах). Пінимо c-wiz до натуральних розмірів і вмикаємо transform на
+  // #yDmH0d — він стає containing block для fixed-елементів (шапка, панель «Люди»,
+  // контролбар), і вся сторінка поводиться як полотно natW×natH незалежно від
+  // вікна. Скрін-режим ?fit= нижче лише міняє масштаб цього transform.
+  const raster = 'img.m0DVAf[src^="data:image/"]:not([src^="data:image/svg"])';
+  let headInject =
+    '<base href="/">' +
+    '<style>' +
+    `#yDmH0d{transform:scale(1);transform-origin:top left;}` +
+    `c-wiz.SSPGKf{width:${natW}px!important;height:${natH}px!important;}` +
+    `.FKJK2b:has(${raster}){position:relative!important;}` +
+    `.FKJK2b ${raster}{` +
+    'position:absolute!important;inset:0!important;' +
+    'width:100%!important;height:100%!important;' +
+    'object-fit:cover!important;border-radius:inherit!important;' +
+    'display:block!important;clip-path:none!important;z-index:5!important;}' +
+    `.FKJK2b:has(${raster}) img.SOQwsf{display:none!important;}` +
+    // Кружечки панелі «Люди»/«Ще 3 особи» (KjWwNd; height:100%, width — за аспектом
+    // картинки) і бейджа People (Qw4c9e): фото-аватарка не квадратна (на відміну
+    // від SVG-літер з viewBox 1:1) — без цього бокс розтягується в овал.
+    'img.KjWwNd[src^="data:image/"]:not([src^="data:image/svg"]),' +
+    'img.Qw4c9e[src^="data:image/"]:not([src^="data:image/svg"])' +
+    '{aspect-ratio:1/1!important;object-fit:cover!important;}' +
+    // Бейдж мікрофона на плитці фарбується у колір ТЕМИ плитки (кружечок-фон
+    // .JHK7jb = --tile-on-primary, напр. rgb(0,55,50); іконка = --tile-primary),
+    // бо «сіре» правило шаблону скоупнуте під тулбар (.GvcuGe), а плитки під нього
+    // не підпадають. Форсимо нейтральний сірий, як у скріні-еталоні: темно-сірий
+    // кружечок + світло-сіра іконка. .Hdh4hc{fill:currentcolor} ⇒ для іконки досить
+    // color на контейнері mic-стану (.uB7U9e/.aC0Bke).
+    '.dkjMxf .JHK7jb{background-color:rgb(60,64,67)!important;}' +
+    '.dkjMxf .uB7U9e,.dkjMxf .aC0Bke{color:rgb(232,234,237)!important;}' +
+    '</style>';
+
+  // Приховати всі появи видалених учасників (плитка/рядок/кружечок/бейдж).
+  if (hideSelectors.length) {
+    headInject += '<style>' + hideSelectors.join(',') + '{display:none!important;}</style>';
+  }
+
+  // Браузерні методи деградації (css): фільтр накладе сам браузер при рендері.
+  headInject += camHeadMarkup(camMethod, camI);
+
+  // Скрін-режим ?fit=ШИРИНАxВИСОТА — масштабувати #yDmH0d під вікно (без білих полос).
+  const fm = fit ? /^(\d+)x(\d+)$/.exec(fit) : null;
+  if (fm) {
+    const fitW = parseInt(fm[1], 10);
+    const fitH = parseInt(fm[2], 10);
+    if (fitW > 0 && fitH > 0 && natW > 0 && natH > 0) {
+      const sx = (fitW / natW).toFixed(6);
+      const sy = (fitH / natH).toFixed(6);
+      headInject +=
+        '<style>' +
+        'html,body{margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important;}' +
+        `#yDmH0d{transform:scale(${sx},${sy})!important;transform-origin:top left!important;}` +
+        '</style>';
+    }
+  }
+
+  const needle = '<head>';
+  const idx = html.indexOf(needle);
+  if (idx !== -1) {
+    html = html.slice(0, idx) + needle + headInject + html.slice(idx + needle.length);
+  }
+
+  return Buffer.from(html, 'latin1');
+}

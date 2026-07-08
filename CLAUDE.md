@@ -8,6 +8,12 @@
 > composer/фреймворків). `data.db`, REST API і фронтенд лишились ті самі —
 > `/api/render` віддає байт-у-байт ідентичний результат.
 
+> 🖥️ **Electron-перепис** живе в `desktop/` (гілка `electron-rewrite`, Windows + macOS,
+> авто-апдейт). Коли працюєш над десктоп-додатком, **обовʼязково** читай
+> `desktop/CLAUDE.md` (вантажиться авто) і дотримуйся агента **electron-pro**
+> (`.claude/agents/electron-pro.md`) + скіла **electron-best-practices**
+> (`.claude/skills/electron-best-practices/`). Цей кореневий файл описує PHP-версію.
+
 ## Структура проекту
 
 ```

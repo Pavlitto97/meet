@@ -1,0 +1,159 @@
+# Meet Editor — Desktop (Electron)
+
+Кросплатформний (Windows + macOS) перепис PHP-редактора збереженої сторінки Meet
+на **Electron**. Усі дані й генерації — **локально**, авто-апдейти — з приватного
+GitHub-репо. Рендер `index.html` лишився **байт-у-байт** ідентичним PHP-версії.
+
+## Стек (звірено середина-2026)
+
+| Шар | Технологія |
+| --- | --- |
+| Оболонка | Electron 42 (Chromium 148 / Node 24.15) |
+| Мова | TypeScript у `main`, vanilla HTML/JS у `renderer` |
+| БД | **node:sqlite** (вбудований у Node 24 — без нативної збірки) |
+| Зображення | **sharp** 0.34 (заміна PHP GD) |
+| Скріни | `webContents.capturePage()` на offscreen-вікні (без зовнішнього Chrome) |
+| Транспорт | кастомний протокол **`app://`** (REST `/api/*` як у PHP, але в main-процесі) |
+| Апдейти | electron-updater + electron-builder (GitHub Releases) |
+| Логи | electron-log (`~/Library/Logs/<app>` / `%APPDATA%\<app>\logs`) |
+
+> **Чому node:sqlite, а не better-sqlite3:** better-sqlite3 12.x **не компілюється**
+> під V8 Electron 42 (зміни C++ API). node:sqlite вбудований, байт-безпечний для BLOB
+> і не потребує `@electron/rebuild`.
+
+## Запуск (dev)
+
+```bash
+cd desktop
+npm install
+npm start            # tsc + electron
+npm run dev          # tsc -w (в окремому терміналі) + `electron .`
+```
+
+Застосунок відкриває Vue-SPA (`app://meet/index.html`) одразу на адмін-панелі.
+Вкладки: **Групи** (склади учасників зі своїми фото/генераціями; активна група йде
+у рендер і скріни) → всередині групи — учасники з трьома зображеннями
+(Оригінал / Початок / Кінець), **Генерації** (історія + порівняння, фільтри),
+**Скріни**, **Налаштування** (окрема плашка API-токенів), **Промт**.
+
+## Креди (.env)
+
+`.env` **закомічено в приватний репо** (рішення проєкту — «забути про сікюрність»).
+Заповни перед збіркою:
+
+```
+OPENROUTER_API_KEY=sk-or-...     # ключ генерації (окремий, зі спенд-лімітом)
+GH_TOKEN=github_pat_...          # fine-grained PAT, цей репо, Contents: Read —
+                                 # клієнт ним тягне приватні релізи для авто-апдейту
+```
+
+> Ключ і токен потрапляють у бандл застосунку й витягуються будь-ким з інсталяцією —
+> прийнятно, поки репо й дистрибуція приватні. Не публікуй репо.
+
+## Дані (локально)
+
+Усе — в `app.getPath('userData')`:
+- `data.db` — SQLite (групи, учасники з source-зображеннями, налаштування,
+  генерації, скріни, журнал). Стара одногрупна БД мігрує автоматично (група №1).
+- `promt.md` — промт.
+- `index.html`/`index.html.bak` — read-only у ресурсах застосунку (рендер їх не мутує).
+
+## Білд і реліз (авто-апдейт)
+
+```bash
+npm run dist:win     # NSIS .exe (+latest.yml, .blockmap) — авто-апдейт працює
+npm run dist:mac     # dmg + zip (arm64 + x64), unsigned
+npm run publish      # build + electron-builder --publish always (потрібен GH_TOKEN)
+```
+
+**Реліз:** підняти `version` у `package.json` → тег `vX.Y.Z` → пуш. CI
+`.github/workflows/release.yml` білдить на `windows-latest` + `macos-latest` і
+публікує у GitHub Releases (`GITHUB_TOKEN`). Тег має збігатися з `version`.
+electron-builder сам кладе у реліз `latest.yml`/`latest-mac.yml` + `.blockmap`
+(диференційні апдейти) — фід, який читає клієнт.
+
+**Як клієнт оновлюється** (`src/main/updater.ts`, electron-updater): перевірка
+релізів приватного репо через 10 c після старту і далі кожні 6 год; доступне
+оновлення тихо качається у фоні. Коли завантажено — рендер показує банер
+**«Перезапустити й оновити»** (`UpdateBanner.vue`), інакше воно застосовується при
+наступному виході. Поточна версія, ручна перевірка і кнопка перезапуску — у
+**Налаштування → Оновлення додатку**. Приватний репо вимагає, щоб у клієнта в `.env`
+був `GH_TOKEN` (інакше перевірка → 404, UI покаже помилку). Токен лишається в main,
+у рендер не потрапляє (IPC-канали `update:check`/`update:install`/`update:get-state`
++ пуш `update:status`).
+
+- **Windows:** авто-апдейт працює і без підпису (юзер бачить попередження SmartScreen).
+- **macOS:** Squirrel.Mac **відмовляє непідписаним апдейтам** → поки unsigned, апдейт
+  вимкнено (стан `disabled`, без помилок), Mac-юзери ставлять вручну. Увімкнути тихий
+  mac-апдейт:
+  1. прибрати `identity: null` у `electron-builder.yml` (entitlements уже на місці);
+  2. додати секрети `CSC_LINK`/`CSC_KEY_PASSWORD` + `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` у репо;
+  3. запускати клієнт із env `MEET_MAC_UPDATES=1` (гейт в `updater.ts`).
+
+## Деінсталяція
+
+- **Windows (NSIS):** «Установка та видалення програм» → *Meet Editor* → Видалити
+  (або `Uninstall Meet Editor.exe` у теці встановлення). Деінсталятор **лишає**
+  локальні дані (БД, аватарки, скріни, кешований ключ) у `%APPDATA%\Meet Editor` —
+  рішення проєкту (`deleteAppDataOnUninstall: false`). Стерти вручну: видалити теку
+  `%APPDATA%\Meet Editor`.
+- **macOS:** перетягнути `Meet Editor.app` у кошик. Залишкові дані —
+  `~/Library/Application Support/Meet Editor` (+ `Logs`/`Caches`/`Preferences`).
+  Помічник: `bash scripts/uninstall-macos.sh` (видалити лише .app) або
+  `bash scripts/uninstall-macos.sh --purge` (ще й стерти всі локальні дані).
+
+## Дебаг (рекомендований сетап для AI-агента)
+
+```bash
+npm run debug        # electron з --inspect=9229 (main) + --remote-debugging-port=9222 (renderer)
+```
+
+**MCP-сервери:**
+- **Playwright MCP** (вже підключений) — націлити на renderer:
+  `npx @playwright/mcp@latest --cdp-endpoint=http://127.0.0.1:9222`
+- **chrome-devtools-mcp** (консоль/network/perf зі source-map):
+  `claude mcp add chrome-devtools -- npx -y chrome-devtools-mcp@latest --browser-url http://127.0.0.1:9222`
+
+**VS Code:** `.vscode/launch.json` → компаунд «Electron: main + renderer» (Node@9229 + Chrome@9222).
+Source maps увімкнені (`tsconfig sourceMap:true`).
+
+## Архітектура (відповідність PHP)
+
+```
+src/main/
+  index.ts            ← server.php/router.php: lifecycle, app://, БД, вікно, апдейтер
+  protocol.ts         ← serve_file + диспетч REST через app://
+  http.ts             ← http.php: MeetRequest/MeetResponse, route(), dispatch()
+  routes.ts           ← routes.php: уся REST-поверхня
+  updater.ts          ← electron-updater + electron-log (статус-модель + IPC update:*)
+  services/
+    config.ts         ← config.php (latin1→utf8 mojibake, дефолти, emoji-мапа)
+    paths.ts          ← шляхи (userData / resources)
+    db.ts             ← db.php на node:sqlite (схема 1:1, BLOB, міграції)
+    media.ts          ← media.php (data:URL ↔ Buffer)
+    settings.ts       ← settings.php (секрети приховано)
+    groups.ts         ← групи учасників (CRUD + активна група)
+    participants.ts   ← participants.php (CRUD + reorder; групи, source-зображення)
+    openrouter.ts     ← openrouter.php (curl → native fetch)
+    degrade.ts        ← degrade.php (GD → sharp; CSS-метод формула-в-формулу)
+    render.ts         ← render.php (БАЙТОВА заміна у latin1; верифіковано cmp = PHP)
+    generations.ts    ← generations.php (inline-async замість детачнутого воркера)
+    screenshots.ts    ← screenshots.php (headless Chrome → capturePage)
+    admin.ts          ← admin.php (stats/system/db/export/import/backup)
+renderer/             ← Vue 3 + Vite SPA (вкладки адмінки: групи/генерації/скріни/налаштування/промт)
+resources/            ← index.html (2.9MB) + .bak + promt.md
+```
+
+## Webcam-деградація
+
+UI-лабораторію прибрано. Лишилась **авто-деградація генерацій** (settings
+`gen_degrade*`: кодек бейкається у щойно згенеровану картинку з випадковою силою)
+та cam-гейт рендеру `?cam=<метод>:<сила>` (без `cam` — байт-у-байт). Криві сили —
+у `degrade.ts::webcamize()` (sharp-наближення GD-конвеєра).
+
+## Перевірено
+
+- `tsc` — без помилок.
+- `/api/render` (start+end) — **байт-у-байт** ідентичний PHP (`cmp`, 2 894 569 B).
+- Роутер + сервіси — end-to-end (settings/participants/render/degrade/admin/404).
+- sharp-конвеєр — gd-jpeg/gd-full/resizeToCover дають валідні JPEG.

@@ -1,0 +1,66 @@
+name: Release Desktop
+
+# Білд + публікація релізу в GitHub Releases цього (приватного) репо.
+# Тригер — пуш тегу vX.Y.Z (або вручну). electron-updater на клієнтах читає ці
+# релізи (Windows — авто-апдейт; macOS — поки без підпису, ставиться вручну).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      # sharp prebuilt для ОБОХ macOS-архітектур (universal dmg/zip arm64+x64).
+      - name: Install sharp for both macOS arches
+        if: runner.os == 'macOS'
+        run: |
+          npm i --no-save --cpu=x64 --os=darwin sharp
+          npm i --no-save --cpu=arm64 --os=darwin sharp
+
+      - name: Compile TypeScript
+        run: npm run build
+
+      - name: Build & publish (Windows — NSIS, auto-update)
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & publish (macOS — dmg/zip)
+        if: runner.os == 'macOS'
+        run: npx electron-builder --mac --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Поки в electron-builder.yml стоїть `identity: null`, mac-білд unsigned
+          # (крок codesign пропускається) — ці секрети no-op. Щоб увімкнути підпис +
+          # нотаризацію + mac-авто-апдейт: прибрати identity:null у electron-builder.yml,
+          # задати секрети нижче в налаштуваннях репо та клієнт запускати з MEET_MAC_UPDATES=1.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

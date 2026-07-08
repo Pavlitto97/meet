@@ -4,6 +4,10 @@ data.db-shm
 data.db-wal
 .DS_Store
 .env
+# УВАГА: desktop/.env БІЛЬШЕ НЕ комітимо. Пуш GH_TOKEN у репо → GitHub авто-відкликає
+# PAT → ламається авто-апдейт (перевірено на v0.1.6). Креди (GH_TOKEN + OPENROUTER_API_KEY)
+# живуть лише локально й бейкаються в інсталятор при білді. desktop/.env тепер ігнорується
+# загальним правилом `.env` вище.
 .playwright-mcp/
 gen-approve-card.png
 api-render-*.png
@@ -11,3 +15,6 @@ render-with-sanya-avatar.png
 preview-*.png
 sanya-*.png
 verify-*.png
+# Loose dev screenshots / AI generations dumped at repo root (root-anchored).
+/Gemini_Generated_Image*.png
+/image_*.png

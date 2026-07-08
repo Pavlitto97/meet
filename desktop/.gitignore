@@ -1,0 +1,14 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+# Playwright E2E artifacts
+e2e/.artifacts/
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+# NOTE: .env is NOT committed. Pushing GH_TOKEN got the PAT auto-revoked by GitHub and broke
+# auto-update (v0.1.6). Creds stay local and are baked into the installer at build time.
+.env

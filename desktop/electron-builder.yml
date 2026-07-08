@@ -1,0 +1,88 @@
+appId: com.futurra.meeteditor
+productName: Meet Editor
+copyright: © Futurra Group
+
+# Strip everything except the ship-allowlist (GH_TOKEN) from the packaged resources/.env,
+# so the OpenRouter key (or any other local secret) can never end up in a distributable.
+# Runs after packaging, before signing. See scripts/sanitize-ship-env.cjs.
+afterPack: scripts/sanitize-ship-env.cjs
+
+directories:
+  output: dist
+  buildResources: build
+
+# Renderer is the Vite-built Vue SPA (renderer/dist). main/preload → out/. The Vue
+# source (renderer/src, index.html, public/) is NOT shipped — only the bundled dist.
+files:
+  - out/**/*
+  - renderer/dist/**/*
+  - package.json
+
+# The 2.9MB source Meet page + its .bak ship read-only outside the asar,
+# read into memory by render.ts. User data/DB live in app.getPath('userData').
+extraResources:
+  - from: resources
+    to: app-resources
+  # .env is baked for dotenv at startup, but the afterPack hook above rewrites the
+  # SHIPPED copy to an allowlist — only GH_TOKEN/GITHUB_TOKEN travel with the app.
+  # The OpenRouter key is never shipped; users enter their own in Settings.
+  - from: .env
+    to: .env
+
+# sharp is native (prebuilt binaries) and must load from disk, not from inside the asar.
+# SQLite uses Node 24's built-in node:sqlite — no native module, nothing to unpack.
+asarUnpack:
+  - "**/node_modules/sharp/**"
+  - "**/node_modules/@img/**"
+
+# Auto-update feed: GitHub Releases of the private repo (token via .env / GH_TOKEN).
+publish:
+  provider: github
+  owner: Pavlitto97
+  repo: meet
+  private: true
+
+win:
+  # Явний x64: default-арх electron-builder = арх ХОСТА, тож на Apple Silicon `--win`
+  # без цього зібрав би arm64 (і latest.yml вказував би на arm64 — не на x64, який
+  # потрібен 99% Windows-юзерів). x64 працює і на Windows-ARM через емуляцію.
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName} ${version}
+  # Деінсталяція ЛИШАЄ локальні дані (рішення проєкту): БД, аватарки, скріни й
+  # кешований OpenRouter-ключ у %APPDATA%/Meet Editor — переустановка їх відновлює.
+  # deleteAppDataOnUninstall=false — це дефолт electron-builder; задано явно як
+  # документ наміру. Як стерти дані вручну — у docs/CHANGELOG.md / README.md.
+  deleteAppDataOnUninstall: false
+
+# macOS: збираємо БЕЗ підпису (рішення проєкту). Авто-апдейт на mac вимкнено
+# (Squirrel.Mac відмовляє непідписаним) — вмикається разом із підписом.
+# Щоб увімкнути підпис+нотаризацію+mac-апдейт:
+#   1) прибрати `identity: null` нижче;
+#   2) у CI (release.yml) задати секрети CSC_LINK / CSC_KEY_PASSWORD (Developer ID)
+#      та APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID (нотаризація);
+#   3) запускати клієнт із env MEET_MAC_UPDATES=1 (гейт в updater.ts).
+# entitlements нижче потрібні V8 (JIT) для нотаризованих білдів; на unsigned
+# ігноруються (крок підпису не виконується), тож тримати їх тут безпечно.
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  category: public.app-category.utilities
+  identity: null
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
