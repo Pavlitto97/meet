@@ -49,19 +49,46 @@ function letterAvatarDataUrl(name: string, color: string): string {
   return 'data:image/svg+xml;base64,' + Buffer.from(svg, 'utf8').toString('base64');
 }
 
-// ─── Кольори кружечків від ІМЕНІ ───────────────────────────────────────────────
-// Вимога: колір буквеної аватарки — фіксована функція імені учасника: те саме
-// ім'я → завжди той самий колір, у будь-якій групі, на будь-якій позиції і на
-// «початку»/«кінці» однаково. Жодних random/PRNG-розкладів — FNV-1a hash
-// нормалізованого імені по палітрі Meet. Sandro закріплений окремо (#8d6e63).
-function nameColor(name: string): string {
+// ─── Кольори кружечків від ІМЕНІ (унікальні в межах групи) ─────────────────────
+// Вимога: колір буквеної аватарки — стабільна функція імені (те саме ім'я → той
+// самий колір на «початку»/«кінці» й при будь-якому порядку), АЛЕ в межах однієї
+// групи кольори не повторюються. Тому: (1) бажаний індекс — FNV-1a hash імені по
+// палітрі; (2) assignAvatarColors дедуплікує — якщо бажаний зайнятий, детерміновано
+// зсувається до наступного вільного. Sandro закріплений окремо (#8d6e63), тож brown
+// у палітрі відсутній і у пул не потрапляє.
+function nameColorIndex(name: string): number {
   const key = name.trim().toLowerCase();
   let h = 0x811c9dc5;
   for (const ch of key) {
     h ^= ch.codePointAt(0)!;
     h = Math.imul(h, 0x01000193);
   }
-  return LETTER_COLORS[(h >>> 0) % LETTER_COLORS.length];
+  return (h >>> 0) % LETTER_COLORS.length;
+}
+
+// Призначає кожному імені унікальний колір палітри. Порядок призначення — за
+// ВІДСОРТОВАНИМ іменем (не за позицією), тож пересортування учасників кольори не
+// чіпає, а «початок»/«кінець» (та сама група → той самий набір імен) фарбуються
+// однаково. За колізії бажаного індексу зсуваємось уперед по палітрі (wraparound);
+// якщо унікальних імен більше за палітру — надлишок неминуче переюзовує кольори.
+function assignAvatarColors(names: string[]): Map<string, string> {
+  const map = new Map<string, string>();
+  const used = new Set<string>();
+  const unique = [...new Set(names)].sort();
+  for (const name of unique) {
+    const want = nameColorIndex(name);
+    let color = LETTER_COLORS[want];
+    for (let k = 0; k < LETTER_COLORS.length; k++) {
+      const cand = LETTER_COLORS[(want + k) % LETTER_COLORS.length];
+      if (!used.has(cand)) {
+        color = cand;
+        break;
+      }
+    }
+    used.add(color);
+    map.set(name, color);
+  }
+  return map;
 }
 
 /** original_name у БД — latin1-простір (байти UTF-8); назад у читабельний рядок. */
@@ -211,6 +238,12 @@ export async function renderMeet(
       ? String(row.custom_name)
       : latin1SpaceToUtf8(String(row.original_name));
 
+  // Кольори буквених кружечків — унікальні в межах цієї групи. Рахуємо ОДИН раз по
+  // всіх не-Sandro учасниках (rest = плитки + «інші» + надмір), Sandro має свій
+  // закріплений колір. colorOf() → колір за іменем (з дедуплікованої мапи).
+  const colorMap = assignAvatarColors(rest.map((r) => displayNameOf(r)));
+  const colorOf = (name: string): string => colorMap.get(name) ?? LETTER_COLORS[nameColorIndex(name)];
+
   // ── Pass 1: аватарки/літери у файли слота ──
   // Фото — лише у tile-файли слота; решта файлів (панель/кружечок/бейдж) — буквений
   // кружечок (колір — від ІМЕНІ, тож учасник має той самий колір на «початку»/«кінці»
@@ -227,7 +260,7 @@ export async function renderMeet(
       photoUrl = 'data:' + mime + ';base64,' + blob.toString('base64');
     }
     const name = displayNameOf(row);
-    const letterUrl = letterAvatarDataUrl(name, slot === SANDRO_DEVICE ? SANDRO_COLOR : nameColor(name));
+    const letterUrl = letterAvatarDataUrl(name, slot === SANDRO_DEVICE ? SANDRO_COLOR : colorOf(name));
     for (const f of assets.files) {
       const url = photoUrl !== null && tileFiles!.has(f) ? photoUrl : letterUrl;
       html = html.replaceAll(`assets/img/people/${f}.svg`, url);
@@ -257,7 +290,7 @@ export async function renderMeet(
     for (let i = 0; i < overflowRows.length; i++) {
       const name = displayNameOf(overflowRows[i]);
       const nameL1 = utf8ToLatin1(name);
-      const avatar = letterAvatarDataUrl(name, nameColor(name));
+      const avatar = letterAvatarDataUrl(name, colorOf(name));
       const synthId = `${TEMPLATE_SPACE}/devices/ov${i}`;
       clones += panelRowTemplate
         .replace(/data-participant-id="[^"]*"/, () => `data-participant-id="${synthId}"`)
